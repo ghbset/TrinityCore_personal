@@ -1442,7 +1442,14 @@ void Map::ProcessRelocationNotifies(const uint32 diff)
                     Player* player = dirty[i].first;
                     WorldObject* viewPoint = player->m_seer;
                     Trinity::PlayerRelocationNotifier relocate(*player, false /*no AI*/);
-                    Cell::VisitAllObjects(viewPoint, relocate, MAX_VISIBILITY_DISTANCE, false);
+                    // dont_load = TRUE: worker threads must NOT load grids here. Grid loading
+                    // (EnsureGridLoaded -> ObjectGridLoader -> creature Insert) is a SHARED map
+                    // mutation, not a disjoint per-player write; two workers loading the same
+                    // grid race in the grid TypeContainer and SIGSEGV. Any grid that actually
+                    // needs loading is picked up safely by the SERIAL AI-relocation pass below
+                    // (single-threaded) and by active objects entering it, so nothing is lost.
+                    // Mirrors the combat-parallel path's SetNoCreate guard.
+                    Cell::VisitAllObjects(viewPoint, relocate, MAX_VISIBILITY_DISTANCE, true);
                     relocate.SendToSelf();
                 }
                 catch (std::exception const& e)
