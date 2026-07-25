@@ -8992,12 +8992,21 @@ void Player::SendLoot(ObjectGuid guid, LootType loot_type)
                         }
                     }
                     else
-                        permission = NONE_PERMISSION;
+                        // loot fix: an outsider (not in the tapping group) may still take LEFTOVER
+                        // ordinary loot -- gold or a non-looted, non-FFA, non-conditional item -- so
+                        // leftovers a bot left on a corpse are directly lootable. hasItemForAll() is
+                        // false once only quest/FFA/conditional items remain, and ALL_PERMISSION in
+                        // LootView never serializes quest items (those come only from the viewer's own
+                        // PlayerQuestItems, which an outsider lacks), so quest items stay gated to
+                        // kill participants. Consistent with the AoE-loot path.
+                        permission = loot->hasItemForAll() ? ALL_PERMISSION : NONE_PERMISSION;
                 }
                 else if (creature->GetLootRecipient() == this)
                     permission = OWNER_PERMISSION;
                 else
-                    permission = NONE_PERMISSION;
+                    // loot fix (solo-tapped corpse): same rule -- leftover ordinary loot is lootable by
+                    // anyone; quest items remain restricted to the killer via LootView/PlayerQuestItems.
+                    permission = loot->hasItemForAll() ? ALL_PERMISSION : NONE_PERMISSION;
             }
         }
     }

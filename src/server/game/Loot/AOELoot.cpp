@@ -227,6 +227,13 @@ Loot* BuildVirtualAOELoot(Creature* mainCreature, Player* player, WorldSession* 
         if (!corpse)
             continue;
 
+        // loot fix: QUEST items stay gated to kill participants. Only fabricate this player's quest-item
+        // entries for a corpse they (or their group) actually tapped; otherwise the AoE sweep would hand
+        // quest items off corpses they never killed (a non-participant merely holding the quest could
+        // vacuum quest drops via AoE loot). Ordinary leftover items remain permissively lootable above.
+        if (!corpse->isTappedBy(player))
+            continue;
+
         corpse->loot.FillNotNormalLootFor(player, true);
 
         NotNormalLootItemMap& questItemsMap = corpse->loot.GetPlayerQuestItemsNonConst();
