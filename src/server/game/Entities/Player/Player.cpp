@@ -8625,7 +8625,7 @@ void Player::SendLoot(ObjectGuid guid, LootType loot_type)
     Loot* loot;
     PermissionTypes permission = ALL_PERMISSION;
 
-    TC_LOG_INFO("loot", "Player::SendLoot CALLED: Player: '{}' ({}), Loot: {}, loot_type={}",
+    TC_LOG_DEBUG("loot", "Player::SendLoot CALLED: Player: '{}' ({}), Loot: {}, loot_type={}",
         GetName(), GetGUID().ToString(), guid.ToString(), loot_type);
     if (guid.IsGameObject())
     {

@@ -155,11 +155,11 @@ bool handleArgs(int argc, char** argv,
     {
         Usage(options, "Error: uneven set of tile coordinates");
     }
-    for (unsigned i = 0; i < tiles.size() / 2; ++i)
-    {
-        unsigned nxt = i + 1;
-        generated_tiles.insert({ tiles[i],tiles[nxt] });
-    }
+    // --tiles is a flat x,y coord list: consume it as PAIRS (step by 2). Stepping by 1 with nxt=i+1
+    // turned --tiles=a,b,c,d into (a,b),(b,c),(c,d) -- overlapping, wrong tiles -- so targeted tile
+    // generation built garbage and never produced the requested tiles (missing-mmap-tile gaps).
+    for (unsigned i = 0; i + 1 < tiles.size(); i += 2)
+        generated_tiles.insert({ tiles[i], tiles[i + 1] });
 
     return true;
 }
