@@ -23047,8 +23047,36 @@ void Player::StopListeningToAll()
                     p->m_broadcaster->RemoveListener(GetGUID());
 }
 
+// @worldbots-begin: skip client-bound visibility for sessions with no socket
+// A server-side bot has a WorldSession with a null socket. Everything the
+// visibility system does for such a player - CanSeeOrDetect over every object
+// in range, building create/destroy update blocks, growing m_clientGUIDs,
+// listener registration - ends at WorldSession::SendPacket and is discarded,
+// because there is no client to receive it. At a few hundred such players that
+// is the single largest cost in Map::Update, and all of it is waste.
+//
+// This only suppresses what the player would SEE. Other players seeing IT is
+// driven by their own UpdateVisibilityOf calls, where `this` is a real player,
+// so bots remain fully visible to everyone else.
+//
+// Nothing server-side reads m_clientGUIDs to make a decision: every caller of
+// HaveAtClient (Group.cpp, Map.cpp, Object.cpp) is deciding whether to send
+// that player a packet. Interaction, looting, questing and combat are all
+// unaffected.
+bool Player::s_skipClientlessVisibility = true;
+
+bool Player::HasClientlessVisibility() const
+{
+    return s_skipClientlessVisibility && m_session && m_session->PlayerDisconnected();
+}
+// @worldbots-end
+
 void Player::UpdateVisibilityOf(WorldObject* target)
 {
+    // @worldbots: nothing to update for a player with no client
+    if (HasClientlessVisibility())
+        return;
+
     if (HaveAtClient(target))
     {
         if (!CanSeeOrDetect(target, false, true))
@@ -23140,6 +23168,10 @@ void Player::SendInitialVisiblePackets(Unit* target) const
 template<class T>
 void Player::UpdateVisibilityOf(T* target, UpdateData& data, std::set<Unit*>& visibleNow)
 {
+    // @worldbots: nothing to build for a player with no client
+    if (HasClientlessVisibility())
+        return;
+
     if (HaveAtClient(target))
     {
         if (!CanSeeOrDetect(target, false, true))
@@ -23193,6 +23225,10 @@ void Player::UpdateObjectVisibility(bool forced)
 
 void Player::UpdateVisibilityForPlayer()
 {
+    // @worldbots: the whole sweep exists to feed a client this player lacks
+    if (HasClientlessVisibility())
+        return;
+
     // updates visibility of all objects around point of view for current player
     Trinity::VisibleNotifier notifier(*this);
     Cell::VisitAllObjects(m_seer, notifier, GetSightRange());

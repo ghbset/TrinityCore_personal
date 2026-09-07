@@ -1440,6 +1440,15 @@ void Map::ProcessRelocationNotifies(const uint32 diff)
                 try
                 {
                     Player* player = dirty[i].first;
+
+                    // @worldbots: a player with no client never needs its own
+                    // view recomputed - the whole sweep below exists to build
+                    // update blocks for a socket that is not there. It stays in
+                    // `dirty` so the SERIAL AI pass below still runs for it,
+                    // which is what lets creatures notice it moving.
+                    if (player->HasClientlessVisibility())
+                        continue;
+
                     WorldObject* viewPoint = player->m_seer;
                     Trinity::PlayerRelocationNotifier relocate(*player, false /*no AI*/);
                     // dont_load = TRUE: worker threads must NOT load grids here. Grid loading

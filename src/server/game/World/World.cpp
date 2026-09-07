@@ -2481,6 +2481,11 @@ void World::SetInitialWorldSettings()
 
     // @megaserver B1: player-driven full-rescan visibility (default off = legacy path)
     Map::SetVisibilityFullRescan(sConfigMgr->GetBoolDefault("Visibility.FullRescan", false));
+    // @worldbots: server-side players (bot sessions with no socket) build and
+    // then discard every visibility update. Skipping that is the single
+    // largest saving available when running a large bot population.
+    Player::SetSkipClientlessVisibility(
+        sConfigMgr->GetBoolDefault("Visibility.SkipForClientlessSessions", true));
     Map::SetVisibilityParallel(
         sConfigMgr->GetIntDefault("Visibility.ParallelThreads", 0),
         sConfigMgr->GetIntDefault("Visibility.ParallelMinPlayers", 100),

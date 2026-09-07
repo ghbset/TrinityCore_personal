@@ -2226,6 +2226,11 @@ class TC_GAME_API Player : public Unit, public GridObject<Player>
         void StopListeningToAll();
 
         bool HaveAtClient(Object const* u) const;
+        // @worldbots: true when this player's session has no socket, so any
+        // client-bound visibility work would be built and then discarded.
+        bool HasClientlessVisibility() const;
+        static void SetSkipClientlessVisibility(bool on) { s_skipClientlessVisibility = on; }
+        static bool s_skipClientlessVisibility;
 
         bool IsNeverVisible(bool allowServersideObjects) const override;
 
