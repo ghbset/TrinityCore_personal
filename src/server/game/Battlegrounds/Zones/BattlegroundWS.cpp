@@ -19,6 +19,8 @@
 #include "BattlegroundMgr.h"
 #include "Creature.h"
 #include "Chat.h"
+#include <iomanip>
+#include <sstream>
 #include "DBCStores.h"
 #include "GameObject.h"
 #include "Log.h"
@@ -90,6 +92,7 @@ void BattlegroundWS::PostUpdateImpl(uint32 diff)
         UpdateContestedCapture(diff);
         UpdateFlagIdleDecay(diff);
         AnnounceFlagCarriers(diff);
+        SendFlagPinUpdate(diff);
         // @custom-end
 
         if (GetStartTime() >= 27*MINUTE*IN_MILLISECONDS) // 2 min prep + 25 min game
@@ -452,6 +455,95 @@ void BattlegroundWS::AnnounceFlagCarriers(uint32 diff)
         SayToBattleground(std::string("The ") + whose + " flag is with " +
             carrier->GetName() + " near " +
             (area && area->AreaName[LOCALE_enUS] ? area->AreaName[LOCALE_enUS] : "the field") + ".");
+    }
+}
+// @custom-end
+
+// Feeds the WSGFlagPins addon. Both flags, every second, to everyone in the
+// match - including the enemy's, because hiding is exactly what these rules
+// exist to stop working.
+//
+// Coordinates are normalised server-side into the 0-100 the client's map uses,
+// so the addon needs no zone-bounds table of its own and cannot drift out of
+// step with a custom map. Payload is one line:
+//   WSGPIN <tab> A:state:x:y:hp;H:state:x:y:hp
+// state: 0 at base, 1 respawning, 2 carried, 3 on the ground.
+void BattlegroundWS::SendFlagPinUpdate(uint32 diff)
+{
+    _pinUpdateMs += diff;
+    if (_pinUpdateMs < BG_WS_PIN_UPDATE_MS)
+        return;
+    _pinUpdateMs = 0;
+
+    std::ostringstream payload;
+    payload << "WSGPIN\t";
+
+    for (uint8 flagTeam = 0; flagTeam < 2; ++flagTeam)
+    {
+        if (flagTeam)
+            payload << ';';
+
+        const uint8 state = _flagState[flagTeam];
+        float x = 0.0f, y = 0.0f;
+        uint32 hp = 0;
+        uint32 zone = 0;
+        bool located = false;
+
+        if (Player* carrier = ObjectAccessor::FindPlayer(GetFlagPickerGUID(TeamId(flagTeam))))
+        {
+            x = carrier->GetPositionX();
+            y = carrier->GetPositionY();
+            zone = carrier->GetZoneId();
+            hp = carrier->GetMaxHealth()
+                ? uint32(carrier->GetHealth() * 100 / carrier->GetMaxHealth()) : 0;
+            located = true;
+        }
+        else if (state == BG_WS_FLAG_STATE_ON_GROUND)
+        {
+            if (GameObject* dropped = GetBgMap()->GetGameObject(GetDroppedFlagGUID(TeamId(flagTeam))))
+            {
+                x = dropped->GetPositionX();
+                y = dropped->GetPositionY();
+                zone = dropped->GetZoneId();
+                located = true;
+            }
+        }
+        else if (GameObject* stand = GetBGObject(
+            flagTeam == TEAM_ALLIANCE ? BG_WS_OBJECT_A_FLAG : BG_WS_OBJECT_H_FLAG, false))
+        {
+            // At base or respawning: the pin sits on the stand rather than
+            // vanishing, so a player can see where it will come back.
+            x = stand->GetPositionX();
+            y = stand->GetPositionY();
+            zone = stand->GetZoneId();
+            located = true;
+        }
+
+        if (located)
+            Map2ZoneCoordinates(x, y, zone);
+
+        payload << (flagTeam == TEAM_ALLIANCE ? 'A' : 'H') << ':'
+                << uint32(state) << ':'
+                << std::fixed << std::setprecision(1) << (located ? x : 0.0f) << ':'
+                << (located ? y : 0.0f) << ':' << hp;
+    }
+
+    const std::string line = payload.str();
+    for (auto const& itr : GetPlayers())
+    {
+        Player* receiver = ObjectAccessor::FindPlayer(itr.first);
+        if (!receiver)
+            continue;
+        WorldSession* session = receiver->GetSession();
+        // Socketless sessions are this realm's bots; they read the world
+        // directly and there is nobody behind them to draw a pin for.
+        if (!session || session->PlayerDisconnected())
+            continue;
+
+        WorldPacket data;
+        ChatHandler::BuildChatPacket(data, CHAT_MSG_WHISPER, Language(LANG_ADDON),
+            receiver->GetGUID(), receiver->GetGUID(), line, 0, receiver->GetName());
+        session->SendPacket(&data);
     }
 }
 // @custom-end

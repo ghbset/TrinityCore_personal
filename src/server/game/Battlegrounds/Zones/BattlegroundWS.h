@@ -32,6 +32,7 @@ enum BG_WS_TimerOrScore
     BG_WS_CONTESTED_CAPTURE_MS = 3000,      // channel to score with your own flag out
     BG_WS_FLAG_IDLE_RETURN_MS  = 20000,     // carrier safe and idle at home: flag goes back
     BG_WS_CARRIER_ANNOUNCE_MS  = 15000,     // how often carrier positions are called out
+    BG_WS_PIN_UPDATE_MS        = 1000,      // how often the map-pin addon is fed
     // @custom-end
     BG_WS_FLAG_DROP_TIME    = 10000,
     BG_WS_SPELL_FORCE_TIME  = 600000,
@@ -235,6 +236,7 @@ class BattlegroundWS : public Battleground
         void UpdateContestedCapture(uint32 diff);
         void UpdateFlagIdleDecay(uint32 diff);
         void AnnounceFlagCarriers(uint32 diff);
+        void SendFlagPinUpdate(uint32 diff);
         void ReturnCarriedFlagHome(TeamId flagTeam);
         void SayToBattleground(std::string const& line);
         // @custom-end
@@ -293,6 +295,7 @@ class BattlegroundWS : public Battleground
         ContestedCapture _contestedCapture[2];
         uint32 _flagIdleMs[2] = { 0, 0 };
         uint32 _carrierAnnounceMs = 0;
+        uint32 _pinUpdateMs = 0;
         // @custom-end
         int32 _flagsTimer[2];
         int32 _flagsDropTimer[2];
