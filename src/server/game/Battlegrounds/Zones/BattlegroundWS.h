@@ -25,6 +25,14 @@ enum BG_WS_TimerOrScore
 {
     BG_WS_MAX_TEAM_SCORE    = 3,
     BG_WS_FLAG_RESPAWN_TIME = 23000,
+    // @custom-begin: anti-turtle rules. Holding the enemy flag used to be a
+    // perfect denial - while you held it the other team could not score, so
+    // sitting on it was risk-free and matches ran for hours. These make
+    // defending buy tempo rather than immunity.
+    BG_WS_CONTESTED_CAPTURE_MS = 3000,      // channel to score with your own flag out
+    BG_WS_FLAG_IDLE_RETURN_MS  = 20000,     // carrier safe and idle at home: flag goes back
+    BG_WS_CARRIER_ANNOUNCE_MS  = 15000,     // how often carrier positions are called out
+    // @custom-end
     BG_WS_FLAG_DROP_TIME    = 10000,
     BG_WS_SPELL_FORCE_TIME  = 600000,
     BG_WS_SPELL_BRUTAL_TIME = 900000
@@ -221,6 +229,15 @@ class BattlegroundWS : public Battleground
         void SetHordeFlagPicker(ObjectGuid guid)    { m_FlagKeepers[TEAM_HORDE] = guid; }
         bool IsAllianceFlagPickedup() const         { return !m_FlagKeepers[TEAM_ALLIANCE].IsEmpty(); }
         bool IsHordeFlagPickedup() const            { return !m_FlagKeepers[TEAM_HORDE].IsEmpty(); }
+        // @custom-begin: anti-turtle rules
+        void BeginContestedCapture(Player* player, TeamId capturingTeam);
+        void CancelContestedCapture(TeamId capturingTeam, char const* why);
+        void UpdateContestedCapture(uint32 diff);
+        void UpdateFlagIdleDecay(uint32 diff);
+        void AnnounceFlagCarriers(uint32 diff);
+        void ReturnCarriedFlagHome(TeamId flagTeam);
+        void SayToBattleground(std::string const& line);
+        // @custom-end
         void RespawnFlag(uint32 Team, bool captured);
         void RespawnFlagAfterDrop(uint32 Team);
         uint8 GetFlagState(uint32 team)             { return _flagState[GetTeamIndexByTeamId(team)]; }
@@ -265,6 +282,18 @@ class BattlegroundWS : public Battleground
         ObjectGuid m_FlagKeepers[2];                            // 0 - alliance, 1 - horde
         ObjectGuid m_DroppedFlagGUID[2];
         uint8 _flagState[2];                               // for checking flag state
+        // @custom-begin: anti-turtle rules
+        struct ContestedCapture
+        {
+            ObjectGuid player;
+            uint32 elapsedMs = 0;
+            uint32 lastHealth = 0;
+            float x = 0.0f, y = 0.0f, z = 0.0f;
+        };
+        ContestedCapture _contestedCapture[2];
+        uint32 _flagIdleMs[2] = { 0, 0 };
+        uint32 _carrierAnnounceMs = 0;
+        // @custom-end
         int32 _flagsTimer[2];
         int32 _flagsDropTimer[2];
         uint32 _lastFlagCaptureTeam;                       // Winner is based on this if score is equal

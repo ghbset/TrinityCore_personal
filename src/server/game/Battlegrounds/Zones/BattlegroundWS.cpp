@@ -18,6 +18,7 @@
 #include "BattlegroundWS.h"
 #include "BattlegroundMgr.h"
 #include "Creature.h"
+#include "Chat.h"
 #include "DBCStores.h"
 #include "GameObject.h"
 #include "Log.h"
@@ -85,6 +86,12 @@ void BattlegroundWS::PostUpdateImpl(uint32 diff)
 {
     if (GetStatus() == STATUS_IN_PROGRESS)
     {
+        // @custom-begin: anti-turtle rules
+        UpdateContestedCapture(diff);
+        UpdateFlagIdleDecay(diff);
+        AnnounceFlagCarriers(diff);
+        // @custom-end
+
         if (GetStartTime() >= 27*MINUTE*IN_MILLISECONDS) // 2 min prep + 25 min game
         {
             if (GetTeamScore(TEAM_ALLIANCE) == 0)
@@ -248,6 +255,200 @@ void BattlegroundWS::AddPlayer(Player* player)
     if (!isInBattleground)
         PlayerScores[player->GetGUID().GetCounter()] = new BattlegroundWGScore(player->GetGUID());
 }
+
+// @custom-begin: anti-turtle rules
+namespace
+{
+    // A carrier within this of its own start is "at home" - the corner a
+    // turtling team sits in.
+    constexpr float BG_WS_HOME_RADIUS = 50.0f;
+    // How far a capture channel may drift before it breaks.
+    constexpr float BG_WS_CAPTURE_LEASH = 8.0f;
+}
+
+void BattlegroundWS::SayToBattleground(std::string const& line)
+{
+    for (auto const& itr : GetPlayers())
+        if (Player* listener = ObjectAccessor::FindPlayer(itr.first))
+            if (WorldSession* session = listener->GetSession())
+                ChatHandler(session).SendSysMessage(line.c_str());
+}
+
+void BattlegroundWS::BeginContestedCapture(Player* player, TeamId capturingTeam)
+{
+    if (!player || GetStatus() != STATUS_IN_PROGRESS)
+        return;
+    ContestedCapture& channel = _contestedCapture[capturingTeam];
+    if (channel.player == player->GetGUID())
+        return;                                 // already channelling
+
+    channel.player = player->GetGUID();
+    channel.elapsedMs = 0;
+    channel.lastHealth = player->GetHealth();
+    channel.x = player->GetPositionX();
+    channel.y = player->GetPositionY();
+    channel.z = player->GetPositionZ();
+
+    // Announced deliberately: a contested capture is a thing defenders are
+    // meant to run at and interrupt, which is the whole point of it.
+    SayToBattleground(player->GetName() + " is capturing the flag! Interrupt them!");
+}
+
+void BattlegroundWS::CancelContestedCapture(TeamId capturingTeam, char const* why)
+{
+    ContestedCapture& channel = _contestedCapture[capturingTeam];
+    if (channel.player.IsEmpty())
+        return;
+    channel.player.Clear();
+    channel.elapsedMs = 0;
+    if (why)
+        SayToBattleground(std::string("The capture was interrupted: ") + why + ".");
+}
+
+void BattlegroundWS::UpdateContestedCapture(uint32 diff)
+{
+    for (uint8 team = 0; team < 2; ++team)
+    {
+        ContestedCapture& channel = _contestedCapture[team];
+        if (channel.player.IsEmpty())
+            continue;
+
+        Player* player = ObjectAccessor::FindPlayer(channel.player);
+        if (!player || !player->IsAlive() || player->GetBattleground() != this)
+        {
+            CancelContestedCapture(TeamId(team), nullptr);
+            continue;
+        }
+
+        // Still holding the flag it came to score?
+        const TeamId flagTeam = team == TEAM_ALLIANCE ? TEAM_HORDE : TEAM_ALLIANCE;
+        if (GetFlagPickerGUID(flagTeam) != player->GetGUID())
+        {
+            CancelContestedCapture(TeamId(team), nullptr);
+            continue;
+        }
+
+        // Broken by damage. Comparing health is the cheapest honest test for
+        // "someone hit them" and needs no hook into the damage path.
+        if (player->GetHealth() < channel.lastHealth)
+        {
+            CancelContestedCapture(TeamId(team), "the carrier was attacked");
+            continue;
+        }
+        channel.lastHealth = player->GetHealth();
+
+        if (!player->IsWithinDist3d(channel.x, channel.y, channel.z, BG_WS_CAPTURE_LEASH))
+        {
+            CancelContestedCapture(TeamId(team), "the carrier moved away");
+            continue;
+        }
+
+        channel.elapsedMs += diff;
+        if (channel.elapsedMs >= BG_WS_CONTESTED_CAPTURE_MS)
+        {
+            channel.player.Clear();
+            channel.elapsedMs = 0;
+            EventPlayerCapturedFlag(player);
+        }
+    }
+}
+
+void BattlegroundWS::ReturnCarriedFlagHome(TeamId flagTeam)
+{
+    Player* carrier = ObjectAccessor::FindPlayer(GetFlagPickerGUID(flagTeam));
+
+    if (flagTeam == TEAM_ALLIANCE)
+    {
+        SetAllianceFlagPicker(ObjectGuid::Empty);
+        if (carrier)
+            carrier->RemoveAurasDueToSpell(BG_WS_SPELL_SILVERWING_FLAG);
+        RespawnFlag(ALLIANCE, false);
+        SpawnBGObject(BG_WS_OBJECT_A_FLAG, RESPAWN_IMMEDIATELY);
+        UpdateWorldState(BG_WS_FLAG_UNK_ALLIANCE, 0);
+    }
+    else
+    {
+        SetHordeFlagPicker(ObjectGuid::Empty);
+        if (carrier)
+            carrier->RemoveAurasDueToSpell(BG_WS_SPELL_WARSONG_FLAG);
+        RespawnFlag(HORDE, false);
+        SpawnBGObject(BG_WS_OBJECT_H_FLAG, RESPAWN_IMMEDIATELY);
+        UpdateWorldState(BG_WS_FLAG_UNK_HORDE, 0);
+    }
+
+    if (carrier)
+    {
+        if (_flagDebuffState == 1)
+            carrier->RemoveAurasDueToSpell(WS_SPELL_FOCUSED_ASSAULT);
+        else if (_flagDebuffState == 2)
+            carrier->RemoveAurasDueToSpell(WS_SPELL_BRUTAL_ASSAULT);
+    }
+
+    _flagIdleMs[flagTeam] = 0;
+    PlaySoundToAll(BG_WS_SOUND_FLAGS_RESPAWNED);
+    SayToBattleground("A flag carrier hid for too long. The flag has returned to its base.");
+}
+
+void BattlegroundWS::UpdateFlagIdleDecay(uint32 diff)
+{
+    // A carrier fighting through midfield is playing. A carrier sitting safe
+    // in its own base is stalling, and only that second case is punished.
+    for (uint8 flagTeam = 0; flagTeam < 2; ++flagTeam)
+    {
+        Player* carrier = ObjectAccessor::FindPlayer(GetFlagPickerGUID(TeamId(flagTeam)));
+        if (!carrier || !carrier->IsAlive())
+        {
+            _flagIdleMs[flagTeam] = 0;
+            continue;
+        }
+
+        Position const* home = GetTeamStartPosition(
+            GetTeamIndexByTeamId(carrier->GetBGTeam()));
+        const bool safeAtHome = !carrier->IsInCombat() && home &&
+            carrier->IsWithinDist3d(home->GetPositionX(), home->GetPositionY(),
+                home->GetPositionZ(), BG_WS_HOME_RADIUS);
+
+        if (!safeAtHome)
+        {
+            _flagIdleMs[flagTeam] = 0;
+            continue;
+        }
+
+        _flagIdleMs[flagTeam] += diff;
+        if (_flagIdleMs[flagTeam] >= BG_WS_FLAG_IDLE_RETURN_MS)
+            ReturnCarriedFlagHome(TeamId(flagTeam));
+    }
+}
+
+void BattlegroundWS::AnnounceFlagCarriers(uint32 diff)
+{
+    // Hiding only works while nobody knows where you are. Calling the carrier
+    // out on a timer removes that, without needing a map marker the 3.3.5
+    // client has no way to draw.
+    if (!IsAllianceFlagPickedup() && !IsHordeFlagPickedup())
+    {
+        _carrierAnnounceMs = 0;
+        return;
+    }
+
+    _carrierAnnounceMs += diff;
+    if (_carrierAnnounceMs < BG_WS_CARRIER_ANNOUNCE_MS)
+        return;
+    _carrierAnnounceMs = 0;
+
+    for (uint8 flagTeam = 0; flagTeam < 2; ++flagTeam)
+    {
+        Player* carrier = ObjectAccessor::FindPlayer(GetFlagPickerGUID(TeamId(flagTeam)));
+        if (!carrier)
+            continue;
+        char const* whose = flagTeam == TEAM_ALLIANCE ? "Silverwing" : "Warsong";
+        AreaTableEntry const* area = sAreaTableStore.LookupEntry(carrier->GetAreaId());
+        SayToBattleground(std::string("The ") + whose + " flag is with " +
+            carrier->GetName() + " near " +
+            (area && area->AreaName[LOCALE_enUS] ? area->AreaName[LOCALE_enUS] : "the field") + ".");
+    }
+}
+// @custom-end
 
 void BattlegroundWS::RespawnFlag(uint32 Team, bool captured)
 {
@@ -682,16 +883,28 @@ void BattlegroundWS::HandleAreaTrigger(Player* player, uint32 trigger)
         case 3709:                                          // Horde elixir of berserk spawn
             //buff_guid = BgObjects[BG_WS_OBJECT_BERSERKBUFF_2];
             break;
+        // @custom-begin: your own flag being out no longer denies the score,
+        // it only makes it slower and interruptible. Instant with your flag
+        // home, a channel without it - so defending buys tempo, not immunity.
         case 3646:                                          // Alliance Flag spawn
-            if (_flagState[TEAM_HORDE] && !_flagState[TEAM_ALLIANCE])
-                if (GetFlagPickerGUID(TEAM_HORDE) == player->GetGUID())
+            if (_flagState[TEAM_HORDE] && GetFlagPickerGUID(TEAM_HORDE) == player->GetGUID())
+            {
+                if (!_flagState[TEAM_ALLIANCE])
                     EventPlayerCapturedFlag(player);
+                else
+                    BeginContestedCapture(player, TEAM_ALLIANCE);
+            }
             break;
         case 3647:                                          // Horde Flag spawn
-            if (_flagState[TEAM_ALLIANCE] && !_flagState[TEAM_HORDE])
-                if (GetFlagPickerGUID(TEAM_ALLIANCE) == player->GetGUID())
+            if (_flagState[TEAM_ALLIANCE] && GetFlagPickerGUID(TEAM_ALLIANCE) == player->GetGUID())
+            {
+                if (!_flagState[TEAM_HORDE])
                     EventPlayerCapturedFlag(player);
+                else
+                    BeginContestedCapture(player, TEAM_HORDE);
+            }
             break;
+        // @custom-end
         case 3649:                                          // unk1
         case 3688:                                          // unk2
         case 4628:                                          // unk3
@@ -768,6 +981,13 @@ void BattlegroundWS::Reset()
     m_DroppedFlagGUID[TEAM_HORDE].Clear();
     _flagState[TEAM_ALLIANCE]        = BG_WS_FLAG_STATE_ON_BASE;
     _flagState[TEAM_HORDE]           = BG_WS_FLAG_STATE_ON_BASE;
+    // @custom-begin: anti-turtle rules
+    _contestedCapture[TEAM_ALLIANCE] = ContestedCapture();
+    _contestedCapture[TEAM_HORDE]    = ContestedCapture();
+    _flagIdleMs[TEAM_ALLIANCE]       = 0;
+    _flagIdleMs[TEAM_HORDE]          = 0;
+    _carrierAnnounceMs               = 0;
+    // @custom-end
     m_TeamScores[TEAM_ALLIANCE]      = 0;
     m_TeamScores[TEAM_HORDE]         = 0;
 
