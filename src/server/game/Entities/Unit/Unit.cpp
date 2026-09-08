@@ -21,6 +21,8 @@
 #include "Battlefield.h"
 #include "BattlefieldMgr.h"
 #include "Battleground.h"
+#include "Config.h"
+#include "DBCStores.h"
 #include "BattlegroundScore.h"
 #include "CellImpl.h"
 #include "CharacterCache.h"
@@ -745,12 +747,74 @@ void SetCombatValidate(bool on, float safeDist) { s_combatValidate = on; if (saf
 void GetCombatValidateStats(unsigned long long& count, unsigned long long& viol, uint32& maxDist)
 { count = s_intCount.exchange(0); viol = s_intViolations.exchange(0); maxDist = s_intMaxDist.exchange(0); }
 
+// @custom-begin: battleground level scaling.
+//
+// A bracket is only really playable at its top. A level 10 in the 10-19
+// bracket faces roughly two and a half times its health and damage, so it
+// contributes nothing and dies to anything. This lifts everyone below the
+// bracket ceiling towards it.
+//
+// Applied to damage and healing rather than to stats: a stat rewrite needs
+// stat-update plumbing on every battleground entry and exit and shows up as a
+// desynced health bar, whereas scaling what a player deals and takes reaches
+// the same place - a level 10 taking a ninth of the damage has the same
+// effective health as one with nine times the pool, without touching a single
+// stat. It cannot close the gap in ABILITIES, only in numbers; a level 10 will
+// still have fewer buttons than a 19.
+namespace
+{
+    float BattlegroundLevelScale(Unit const* unit)
+    {
+        if (!unit || unit->GetTypeId() != TYPEID_PLAYER)
+            return 1.0f;
+
+        Player const* player = unit->ToPlayer();
+        if (!player->InBattleground())
+            return 1.0f;
+
+        // Read once. A per-hit config lookup would cost more than the scaling.
+        static float const perLevel =
+            sConfigMgr->GetFloatDefault("Battleground.LevelScaling.PerLevelPct", 12.0f) / 100.0f;
+        if (perLevel <= 0.0f)
+            return 1.0f;
+
+        Battleground* bg = const_cast<Player*>(player)->GetBattleground();
+        if (!bg)
+            return 1.0f;
+
+        PvPDifficultyEntry const* bracket =
+            GetBattlegroundBracketById(bg->GetMapId(), bg->GetBracketId());
+        if (!bracket)
+            return 1.0f;
+
+        const uint8 top = uint8(bracket->MaxLevel);
+        const uint8 level = uint8(player->GetLevel());
+        if (level >= top)
+            return 1.0f;
+
+        return 1.0f + float(top - level) * perLevel;
+    }
+}
+// @custom-end
+
 /*static*/ uint32 Unit::DealDamage(Unit* attacker, Unit* victim, uint32 damage, CleanDamage const* cleanDamage, DamageEffectType damagetype, SpellSchoolMask damageSchoolMask, SpellInfo const* spellProto, bool durabilityLoss)
 {
     // @megaserver D harness: zero out damage to players so a hostile-creature combat
     // load test sustains forever — the swing, threat and combat state still register.
     if (s_combatLoadGenImmortalPlayers && victim->GetTypeId() == TYPEID_PLAYER)
         damage = 0;
+
+    // @custom-begin: battleground level scaling. Both directions at one
+    // chokepoint - the low-level player hits harder AND is hit for less, which
+    // is what actually makes the bracket playable from the bottom of it.
+    if (damage)
+    {
+        const float attackerScale = BattlegroundLevelScale(attacker);
+        const float victimScale = BattlegroundLevelScale(victim);
+        if (attackerScale != 1.0f || victimScale != 1.0f)
+            damage = uint32(float(damage) * attackerScale / victimScale);
+    }
+    // @custom-end
 
     // @megaserver D outcome-diff: record interaction distance when inside a parallel worker.
     // For pets/guardians/summons the attacker↔owner distance also matters (the pet's update
@@ -6380,6 +6444,7 @@ void Unit::SetCharm(Unit* charm, bool apply)
 
 /*static*/ void Unit::DealHeal(HealInfo& healInfo)
 {
+
     int32 gain = 0;
     Unit* healer = healInfo.GetHealer();
     Unit* victim = healInfo.GetTarget();
@@ -7611,6 +7676,16 @@ float Unit::SpellCritChanceTaken(Unit const* caster, SpellInfo const* spellInfo,
 
 uint32 Unit::SpellHealingBonusDone(Unit* victim, SpellInfo const* spellProto, uint32 healamount, DamageEffectType damagetype, SpellEffectInfo const& spellEffectInfo, Optional<float> const& donePctTotal, uint32 stack /*= 1*/) const
 {
+    // @custom-begin: battleground level scaling. A healer lifted on damage but
+    // not on healing would be half-scaled and read as broken. HealInfo has no
+    // setter, so this is done where the heal is still a plain number.
+    {
+        const float healerScale = BattlegroundLevelScale(this);
+        if (healerScale != 1.0f)
+            healamount = uint32(float(healamount) * healerScale);
+    }
+    // @custom-end
+
     // For totems get healing bonus from owner (statue isn't totem in fact)
     if (GetTypeId() == TYPEID_UNIT && IsTotem())
         if (Unit* owner = GetOwner())
