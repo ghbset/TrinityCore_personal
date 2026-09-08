@@ -512,6 +512,11 @@ class TC_GAME_API Battleground
         virtual bool IsSpellAllowed(uint32 /*spellId*/, Player const* /*player*/) const { return true; }
         uint32 GetTeamScore(uint32 TeamID) const;
 
+        // @custom-begin: battleground level scaling. How far this unit is
+        // lifted towards the top of its bracket, 1.0 for nobody or nothing.
+        static float LevelScaleFor(Unit const* unit);
+        // @custom-end
+
         virtual uint32 GetPrematureWinner();
 
         // because BattleGrounds with different types and same level range has different m_BracketId

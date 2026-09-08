@@ -26,6 +26,7 @@
 #include "TSGameObject.h"
 // @tswow-end
 #include "Battleground.h"
+#include "Config.h"
 #include "ArenaScore.h"
 #include "BattlegroundMgr.h"
 #include "BattlegroundScore.h"
@@ -1054,6 +1055,15 @@ void Battleground::AddPlayer(Player* player)
     if (player->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_AFK))
         player->ToggleAFK();
 
+    // @custom-begin: say out loud whether level scaling reached this player.
+    // Logged here rather than in the damage path - once per player per match
+    // instead of once per hit, and it answers the only question worth asking:
+    // is it firing, and by how much.
+    if (float const scale = LevelScaleFor(player); scale != 1.0f)
+        TC_LOG_INFO("bg.battleground", "[BGSCALE] {} (level {}) scaled x{:.2f} for this bracket",
+            player->GetName(), player->GetLevel(), scale);
+    // @custom-end
+
     // score struct must be created in inherited class
 
     uint32 team = player->GetBGTeam();
@@ -1987,6 +1997,48 @@ void Battleground::RewardXPAtKill(Player* killer, Player* victim)
         killer->RewardPlayerAndGroupAtKill(victim, true);
 }
 
+
+// @custom-begin: battleground level scaling.
+//
+// A bracket is only really playable at its ceiling: a level 10 in the 10-19
+// bracket faces roughly two and a half times its health and damage. This is
+// how far below the ceiling a unit is, expressed as a multiplier applied to
+// what it deals, takes and heals.
+//
+// It cannot close the gap in ABILITIES, only in numbers - a level 10 still
+// has fewer buttons than a 19.
+float Battleground::LevelScaleFor(Unit const* unit)
+{
+    if (!unit || unit->GetTypeId() != TYPEID_PLAYER)
+        return 1.0f;
+
+    Player const* player = unit->ToPlayer();
+    if (!player->InBattleground())
+        return 1.0f;
+
+    // Read once. A per-hit config lookup would cost more than the scaling.
+    static float const perLevel =
+        sConfigMgr->GetFloatDefault("Battleground.LevelScaling.PerLevelPct", 12.0f) / 100.0f;
+    if (perLevel <= 0.0f)
+        return 1.0f;
+
+    Battleground* bg = const_cast<Player*>(player)->GetBattleground();
+    if (!bg)
+        return 1.0f;
+
+    PvPDifficultyEntry const* bracket =
+        GetBattlegroundBracketById(bg->GetMapId(), bg->GetBracketId());
+    if (!bracket)
+        return 1.0f;
+
+    const uint8 top = uint8(bracket->MaxLevel);
+    const uint8 level = uint8(player->GetLevel());
+    if (level >= top)
+        return 1.0f;
+
+    return 1.0f + float(top - level) * perLevel;
+}
+// @custom-end
 
 uint32 Battleground::GetTeamScore(uint32 teamId) const
 {
