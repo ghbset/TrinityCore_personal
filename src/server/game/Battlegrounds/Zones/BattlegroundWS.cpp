@@ -292,6 +292,8 @@ void BattlegroundWS::BeginContestedCapture(Player* player, TeamId capturingTeam)
     // Announced deliberately: a contested capture is a thing defenders are
     // meant to run at and interrupt, which is the whole point of it.
     SayToBattleground(player->GetName() + " is capturing the flag! Interrupt them!");
+    TC_LOG_INFO("bg.battleground", "[WSG] contested capture STARTED by {} (own flag is out)",
+        player->GetName());
 }
 
 void BattlegroundWS::CancelContestedCapture(TeamId capturingTeam, char const* why)
@@ -301,6 +303,7 @@ void BattlegroundWS::CancelContestedCapture(TeamId capturingTeam, char const* wh
         return;
     channel.player.Clear();
     channel.elapsedMs = 0;
+    TC_LOG_INFO("bg.battleground", "[WSG] contested capture BROKEN: {}", why ? why : "carrier lost");
     if (why)
         SayToBattleground(std::string("The capture was interrupted: ") + why + ".");
 }
@@ -348,6 +351,7 @@ void BattlegroundWS::UpdateContestedCapture(uint32 diff)
         {
             channel.player.Clear();
             channel.elapsedMs = 0;
+            TC_LOG_INFO("bg.battleground", "[WSG] contested capture COMPLETED by {}", player->GetName());
             EventPlayerCapturedFlag(player);
         }
     }
@@ -386,6 +390,8 @@ void BattlegroundWS::ReturnCarriedFlagHome(TeamId flagTeam)
 
     _flagIdleMs[flagTeam] = 0;
     PlaySoundToAll(BG_WS_SOUND_FLAGS_RESPAWNED);
+    TC_LOG_INFO("bg.battleground", "[WSG] flag returned by IDLE DECAY: carrier {} sat safe at home",
+        carrier ? carrier->GetName() : "unknown");
     SayToBattleground("A flag carrier hid for too long. The flag has returned to its base.");
 }
 
