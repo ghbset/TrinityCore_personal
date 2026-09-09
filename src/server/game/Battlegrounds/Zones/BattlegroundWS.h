@@ -32,6 +32,10 @@ enum BG_WS_TimerOrScore
     BG_WS_CONTESTED_CAPTURE_MS = 3000,      // channel to score with your own flag out
     BG_WS_FLAG_IDLE_RETURN_MS  = 20000,     // carrier safe and idle at home: flag goes back
     BG_WS_PIN_UPDATE_MS        = 1000,      // how often the map-pin addon is fed
+    // tswow custom packet opcode the WSGFlagPins addon listens on. Picked high
+    // and distinctive; it shares a namespace with any other module's packets.
+    BG_WS_PIN_OPCODE           = 0x5747,    // 'WG'
+
     // @custom-end
     BG_WS_FLAG_DROP_TIME    = 10000,
     BG_WS_SPELL_FORCE_TIME  = 600000,

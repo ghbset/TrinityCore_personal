@@ -19,6 +19,8 @@
 #include "BattlegroundMgr.h"
 #include "Creature.h"
 #include "Chat.h"
+#include "TSCustomPacket.h"
+#include "TSMap.h"
 #include <iomanip>
 #include <sstream>
 #include "DBCStores.h"
@@ -428,15 +430,22 @@ void BattlegroundWS::UpdateFlagIdleDecay(uint32 diff)
     }
 }
 
-// Feeds the WSGFlagPins addon. Both flags, every second, to everyone in the
-// match - including the enemy's, because hiding is exactly what these rules
-// exist to stop working.
+// Feeds the WSGFlagPins addon over a tswow custom packet: both flags, every
+// second, to everyone on the battleground map - including the enemy's, because
+// hiding is exactly what these rules exist to stop working.
 //
-// Coordinates are normalised server-side into the 0-100 the client's map uses,
-// so the addon needs no zone-bounds table of its own and cannot drift out of
-// step with a custom map. Payload is one line:
-//   WSGPIN <tab> A:state:x:y:hp;H:state:x:y:hp
-// state: 0 at base, 1 respawning, 2 carried, 3 on the ground.
+// A custom packet rather than an addon message: it is typed and binary instead
+// of a parsed chat string, it costs the chat system nothing, and BroadcastMap
+// is precisely "everyone in this battleground". It does require the tswow
+// client extensions, which a stock client does not have - but this realm's
+// client is patched anyway, and the alternative was hoping CHAT_MSG_ADDON
+// behaved.
+//
+// Layout, twice - alliance flag then horde flag:
+//   uint8  state   0 at base, 1 respawning, 2 carried, 3 on the ground
+//   float  x, y    map-relative 0-100, normalised here so the addon needs no
+//                  zone-bounds table of its own
+//   uint8  health  carrier health percent, 0 when nobody is carrying
 void BattlegroundWS::SendFlagPinUpdate(uint32 diff)
 {
     _pinUpdateMs += diff;
@@ -444,17 +453,18 @@ void BattlegroundWS::SendFlagPinUpdate(uint32 diff)
         return;
     _pinUpdateMs = 0;
 
-    std::ostringstream payload;
-    payload << "WSGPIN\t";
+    Map* map = GetBgMap();
+    if (!map)
+        return;
+
+    // 2 flags x (1 + 4 + 4 + 1)
+    TSPacketWrite packet = CreateCustomPacket(BG_WS_PIN_OPCODE, 20);
 
     for (uint8 flagTeam = 0; flagTeam < 2; ++flagTeam)
     {
-        if (flagTeam)
-            payload << ';';
-
         const uint8 state = _flagState[flagTeam];
         float x = 0.0f, y = 0.0f;
-        uint32 hp = 0;
+        uint8 health = 0;
         uint32 zone = 0;
         bool located = false;
 
@@ -463,13 +473,13 @@ void BattlegroundWS::SendFlagPinUpdate(uint32 diff)
             x = carrier->GetPositionX();
             y = carrier->GetPositionY();
             zone = carrier->GetZoneId();
-            hp = carrier->GetMaxHealth()
-                ? uint32(carrier->GetHealth() * 100 / carrier->GetMaxHealth()) : 0;
+            health = carrier->GetMaxHealth()
+                ? uint8(carrier->GetHealth() * 100 / carrier->GetMaxHealth()) : 0;
             located = true;
         }
         else if (state == BG_WS_FLAG_STATE_ON_GROUND)
         {
-            if (GameObject* dropped = GetBgMap()->GetGameObject(GetDroppedFlagGUID(TeamId(flagTeam))))
+            if (GameObject* dropped = map->GetGameObject(GetDroppedFlagGUID(TeamId(flagTeam))))
             {
                 x = dropped->GetPositionX();
                 y = dropped->GetPositionY();
@@ -490,30 +500,16 @@ void BattlegroundWS::SendFlagPinUpdate(uint32 diff)
 
         if (located)
             Map2ZoneCoordinates(x, y, zone);
+        else
+            x = y = 0.0f;
 
-        payload << (flagTeam == TEAM_ALLIANCE ? 'A' : 'H') << ':'
-                << uint32(state) << ':'
-                << std::fixed << std::setprecision(1) << (located ? x : 0.0f) << ':'
-                << (located ? y : 0.0f) << ':' << hp;
+        packet->WriteUInt8(state);
+        packet->WriteFloat(x);
+        packet->WriteFloat(y);
+        packet->WriteUInt8(health);
     }
 
-    const std::string line = payload.str();
-    for (auto const& itr : GetPlayers())
-    {
-        Player* receiver = ObjectAccessor::FindPlayer(itr.first);
-        if (!receiver)
-            continue;
-        WorldSession* session = receiver->GetSession();
-        // Socketless sessions are this realm's bots; they read the world
-        // directly and there is nobody behind them to draw a pin for.
-        if (!session || session->PlayerDisconnected())
-            continue;
-
-        WorldPacket data;
-        ChatHandler::BuildChatPacket(data, CHAT_MSG_WHISPER, Language(LANG_ADDON),
-            receiver->GetGUID(), receiver->GetGUID(), line, 0, receiver->GetName());
-        session->SendPacket(&data);
-    }
+    packet->BroadcastMap(TSMap(map), 0);
 }
 // @custom-end
 
