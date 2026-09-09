@@ -91,7 +91,6 @@ void BattlegroundWS::PostUpdateImpl(uint32 diff)
         // @custom-begin: anti-turtle rules
         UpdateContestedCapture(diff);
         UpdateFlagIdleDecay(diff);
-        AnnounceFlagCarriers(diff);
         SendFlagPinUpdate(diff);
         // @custom-end
 
@@ -428,36 +427,6 @@ void BattlegroundWS::UpdateFlagIdleDecay(uint32 diff)
             ReturnCarriedFlagHome(TeamId(flagTeam));
     }
 }
-
-void BattlegroundWS::AnnounceFlagCarriers(uint32 diff)
-{
-    // Hiding only works while nobody knows where you are. Calling the carrier
-    // out on a timer removes that, without needing a map marker the 3.3.5
-    // client has no way to draw.
-    if (!IsAllianceFlagPickedup() && !IsHordeFlagPickedup())
-    {
-        _carrierAnnounceMs = 0;
-        return;
-    }
-
-    _carrierAnnounceMs += diff;
-    if (_carrierAnnounceMs < BG_WS_CARRIER_ANNOUNCE_MS)
-        return;
-    _carrierAnnounceMs = 0;
-
-    for (uint8 flagTeam = 0; flagTeam < 2; ++flagTeam)
-    {
-        Player* carrier = ObjectAccessor::FindPlayer(GetFlagPickerGUID(TeamId(flagTeam)));
-        if (!carrier)
-            continue;
-        char const* whose = flagTeam == TEAM_ALLIANCE ? "Silverwing" : "Warsong";
-        AreaTableEntry const* area = sAreaTableStore.LookupEntry(carrier->GetAreaId());
-        SayToBattleground(std::string("The ") + whose + " flag is with " +
-            carrier->GetName() + " near " +
-            (area && area->AreaName[LOCALE_enUS] ? area->AreaName[LOCALE_enUS] : "the field") + ".");
-    }
-}
-// @custom-end
 
 // Feeds the WSGFlagPins addon. Both flags, every second, to everyone in the
 // match - including the enemy's, because hiding is exactly what these rules
@@ -1084,7 +1053,6 @@ void BattlegroundWS::Reset()
     _contestedCapture[TEAM_HORDE]    = ContestedCapture();
     _flagIdleMs[TEAM_ALLIANCE]       = 0;
     _flagIdleMs[TEAM_HORDE]          = 0;
-    _carrierAnnounceMs               = 0;
     // @custom-end
     m_TeamScores[TEAM_ALLIANCE]      = 0;
     m_TeamScores[TEAM_HORDE]         = 0;
