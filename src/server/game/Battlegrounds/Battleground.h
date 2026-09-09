@@ -537,6 +537,13 @@ class TC_GAME_API Battleground
 
         void _ProcessOfflineQueue();
         void _ProcessResurrect(uint32 diff);
+        // @custom-begin: nothing put anyone INTO the resurrect queue. The
+        // spirit guide's area cast is commented out in AddSpiritGuide, so a
+        // ghost standing at the graveyard waited forever unless it clicked the
+        // guide - a whole team was seen doing exactly that. This queues them.
+        void _QueueGhostsAtSpiritGuides(uint32 diff);
+        uint32 _ghostQueueTimer = 0;
+        // @custom-end
         void _ProcessProgress(uint32 diff);
         void _ProcessLeave(uint32 diff);
         void _ProcessJoin(uint32 diff);

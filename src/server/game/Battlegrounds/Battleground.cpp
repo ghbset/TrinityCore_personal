@@ -230,6 +230,7 @@ void Battleground::Update(uint32 diff)
             else
             {
                 _ProcessResurrect(diff);
+                _QueueGhostsAtSpiritGuides(diff);   // @custom
                 if (sBattlegroundMgr->GetPrematureFinishTime() && (GetPlayersCountByTeam(ALLIANCE) < GetMinPlayersPerTeam() || GetPlayersCountByTeam(HORDE) < GetMinPlayersPerTeam()))
                     _ProcessProgress(diff);
                 else if (m_PrematureCountDown)
@@ -314,6 +315,54 @@ inline void Battleground::_ProcessOfflineQueue()
         }
     }
 }
+
+// @custom-begin: put ghosts standing at a spirit guide into the resurrect
+// queue, which is what everyone assumes already happens.
+//
+// AddSpiritGuide sets a channel spell id for the visual but the cast that
+// would apply the area aura is commented out, and AddPlayerToResurrectQueue is
+// only ever reached from a client packet. So a player had to click the guide,
+// and a bot could not click anything - the graveyard filled up with ghosts and
+// the thirty second tick had an empty queue to revive.
+void Battleground::_QueueGhostsAtSpiritGuides(uint32 diff)
+{
+    _ghostQueueTimer += diff;
+    if (_ghostQueueTimer < 2000)
+        return;
+    _ghostQueueTimer = 0;
+
+    // How close a ghost has to be to count as waiting at that graveyard.
+    constexpr float SpiritGuideRange = 30.0f;
+
+    for (ObjectGuid const& guideGuid : BgCreatures)
+    {
+        if (guideGuid.IsEmpty())
+            continue;
+        Creature* guide = GetBgMap() ? GetBgMap()->GetCreature(guideGuid) : nullptr;
+        if (!guide || !guide->IsSpiritService())
+            continue;
+
+        const bool guideIsAlliance = guide->GetEntry() == BG_CREATURE_ENTRY_A_SPIRITGUIDE;
+
+        for (auto const& itr : GetPlayers())
+        {
+            Player* ghost = ObjectAccessor::FindPlayer(itr.first);
+            if (!ghost || ghost->IsAlive())
+                continue;
+            // Already queued: the aura IS the queue membership.
+            if (ghost->HasAura(SPELL_WAITING_FOR_RESURRECT))
+                continue;
+            // Each guide serves its own side.
+            if ((ghost->GetBGTeam() == ALLIANCE) != guideIsAlliance)
+                continue;
+            if (!ghost->IsWithinDistInMap(guide, SpiritGuideRange))
+                continue;
+
+            AddPlayerToResurrectQueue(guideGuid, ghost->GetGUID());
+        }
+    }
+}
+// @custom-end
 
 inline void Battleground::_ProcessResurrect(uint32 diff)
 {
