@@ -4497,3 +4497,22 @@ Movement.SmoothGroundPath.MaxStep = 0
 #        Default:     2
 
 Movement.Wander.MaxSteps = 2
+
+###################################################################################################
+# SPELL QUEUE
+#
+#    SpellQueue.Enabled
+#        Description: Hold a cast pressed while the current cast / global cooldown is about to end and fire
+#                     it the moment it can (retail 4.1+). Pairs with the wxl-spellqueue client extension,
+#                     which lets the client send casts during the end of the global cooldown.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
+
+SpellQueue.Enabled = 1
+
+#    SpellQueue.Window
+#        Description: How early (ms) a cast may arrive and still be held; the player's latency is added.
+#                     Keep it equal to the client extension's window.
+#        Default:     400
+
+SpellQueue.Window = 400

@@ -1075,10 +1075,14 @@ void Player::UpdateInvisibilityDrunkDetect()
         UpdateObjectVisibility();
 }
 
+void ProcessPlayerSpellQueue(Player* player);  // SpellHandler.cpp
+
 void Player::Update(uint32 p_time)
 {
     if (!IsInWorld())
         return;
+
+    ProcessPlayerSpellQueue(this);
 
     // adaptive player-visibility cap: re-evaluate our radius ~1/s
     if (m_playerCapTimer <= p_time)

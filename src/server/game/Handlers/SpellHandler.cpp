@@ -42,6 +42,117 @@
 #include "TotemPackets.h"
 #include "World.h"
 #include "WorldPacket.h"
+#include "SpellHistory.h"
+#include <deque>
+#include <mutex>
+#include <unordered_map>
+
+// ---- Spell queue (retail 4.1+, AzerothCore PR #20797 ported) --------------------------------------------
+// A cast or item use that arrives while the player is still casting or on (global) cooldown is held when
+// what blocks it ends within the queue window, then replayed through its normal handler the moment it can
+// go: casts chain with no gap regardless of latency. The client side is the wxl-spellqueue extension, which
+// lets the 3.3.5 client send casts during the last part of the global cooldown (stock refuses them).
+// Kept outside Player so the Player layout (compiled into livescripts) does not change; map threads can
+// run players in parallel, so the table is locked.
+namespace
+{
+    struct QueuedCast
+    {
+        uint32 spellId;
+        uint32 category;   // StartRecoveryCategory (global cooldown group), 0 = off the GCD
+        WorldPacket packet;
+        bool isItem;
+    };
+    std::mutex s_spellQueueLock;
+    std::unordered_map<ObjectGuid, std::deque<QueuedCast>> s_spellQueues;
+
+    /// Queue window for this player in ms (config + their latency, as the cast left them that much earlier); 0 = off.
+    uint32 SpellQueueWindow(Player* player)
+    {
+        static bool const enabled = sConfigMgr->GetBoolDefault("SpellQueue.Enabled", true);
+        static uint32 const window = uint32(sConfigMgr->GetIntDefault("SpellQueue.Window", 400));
+        return enabled ? window + player->GetSession()->GetLatency() : 0;
+    }
+
+    bool CanCastNow(Player* player, SpellInfo const* spellInfo)
+    {
+        return !player->GetSpellHistory()->HasGlobalCooldown(spellInfo)
+            && player->GetSpellHistory()->GetRemainingCooldown(spellInfo) == 0
+            && !player->IsNonMeleeSpellCast(false, true, true);
+    }
+
+    /// Holds the request if it cannot go now but could within the window. @return true if queued.
+    bool TryQueueCast(Player* player, SpellInfo const* spellInfo, WorldPacket const& packet, bool isItem)
+    {
+        if (CanCastNow(player, spellInfo))
+            return false;
+        uint32 const window = SpellQueueWindow(player);
+        if (!window
+            || player->GetSpellHistory()->GetRemainingGlobalCooldown(spellInfo) > window
+            || player->GetSpellHistory()->GetRemainingCooldown(spellInfo) > window)
+            return false;
+        if (Spell* current = player->GetCurrentSpell(CURRENT_GENERIC_SPELL))
+            if (current->GetRemainingCastTime() > int32(window))
+                return false;
+
+        WorldPacket copy(packet);
+        copy.rpos(0);
+        std::lock_guard<std::mutex> lock(s_spellQueueLock);
+        std::deque<QueuedCast>& queue = s_spellQueues[player->GetGUID()];
+        // One spell per global-cooldown category may wait: pressing another replaces it (retail: last press wins).
+        // Off-GCD casts and item uses (category 0) wait alongside it and go in the order pressed.
+        uint32 const gcdCategory = spellInfo->StartRecoveryCategory;
+        if (gcdCategory)
+            for (QueuedCast& queued : queue)
+                if (queued.category == gcdCategory)
+                {
+                    queued = QueuedCast{ spellInfo->Id, gcdCategory, std::move(copy), isItem };
+                    return true;
+                }
+        if (queue.size() >= 3)
+            return false;
+        queue.push_back(QueuedCast{ spellInfo->Id, gcdCategory, std::move(copy), isItem });
+        return true;
+    }
+
+    void ClearSpellQueue(Player* player)
+    {
+        std::lock_guard<std::mutex> lock(s_spellQueueLock);
+        s_spellQueues.erase(player->GetGUID());
+    }
+}
+
+/// Called from Player::Update: replays held casts in order as soon as each one can go.
+void ProcessPlayerSpellQueue(Player* player)
+{
+    for (int guard = 0; guard < 3; ++guard)
+    {
+        QueuedCast next;
+        {
+            std::lock_guard<std::mutex> lock(s_spellQueueLock);
+            auto it = s_spellQueues.find(player->GetGUID());
+            if (it == s_spellQueues.end())
+                return;
+            if (it->second.empty())
+            {
+                s_spellQueues.erase(it);
+                return;
+            }
+            SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(it->second.front().spellId);
+            if (spellInfo && !CanCastNow(player, spellInfo))
+                return;
+            next = std::move(it->second.front());
+            it->second.pop_front();
+        }
+        if (WorldSession* session = player->GetSession())
+        {
+            if (next.isItem)
+                session->HandleUseItemOpcode(next.packet);
+            else
+                session->HandleCastSpellOpcode(next.packet);
+        }
+    }
+}
 
 void WorldSession::HandleClientCastFlags(WorldPacket& recvPacket, uint8 castFlags, SpellCastTargets& targets)
 {
@@ -97,6 +208,13 @@ void WorldSession::HandleUseItemOpcode(WorldPacket& recvPacket)
         pUser->SendEquipError(EQUIP_ERR_ITEM_NOT_FOUND, nullptr, nullptr);
         return;
     }
+
+    if (SpellInfo const* queuedSpell = sSpellMgr->GetSpellInfo(spellId))
+        if (TryQueueCast(pUser, queuedSpell, recvPacket, true))
+        {
+            recvPacket.rfinish();
+            return;
+        }
 
     TC_LOG_DEBUG("network", "WORLD: CMSG_USE_ITEM packet, bagIndex: {}, slot: {}, castCount: {}, spellId: {}, Item: {}, glyphIndex: {}, data length = {}", bagIndex, slot, castCount, spellId, pItem->GetEntry(), glyphIndex, (uint32)recvPacket.size());
 
@@ -350,6 +468,12 @@ void WorldSession::HandleCastSpellOpcode(WorldPacket& recvPacket)
         return;
     }
 
+    if (TryQueueCast(_player, spellInfo, recvPacket, false))
+    {
+        recvPacket.rfinish();
+        return;
+    }
+
     // client provided targets
     SpellCastTargets targets;
     targets.Read(recvPacket, _player);
@@ -374,6 +498,18 @@ void WorldSession::HandleCastSpellOpcode(WorldPacket& recvPacket)
 
         if (!allow)
             return;
+    }
+
+    // SPELL_AURA_OVERRIDE_SPELL: the known spell is cast as its replacement (Forever's action-bar overrides)
+    for (AuraEffect const* aurEff : _player->GetAuraEffectsByType(SPELL_AURA_OVERRIDE_SPELL))
+    {
+        if (uint32(aurEff->GetMiscValue()) != spellInfo->Id)
+            continue;
+        if (SpellInfo const* replacement = sSpellMgr->GetSpellInfo(uint32(aurEff->GetAmount())))
+        {
+            spellInfo = replacement;
+            break;
+        }
     }
 
     // Client is resending autoshot cast opcode when other spell is cast during shoot rotation
@@ -411,6 +547,8 @@ void WorldSession::HandleCastSpellOpcode(WorldPacket& recvPacket)
 
 void WorldSession::HandleCancelCastOpcode(WorldPackets::Spells::CancelCast& cancelCast)
 {
+    ClearSpellQueue(_player);
+
     if (_player->IsCharmed())
         return;
 

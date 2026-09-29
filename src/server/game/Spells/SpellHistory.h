@@ -125,6 +125,7 @@ public:
 
     // Global cooldown
     bool HasGlobalCooldown(SpellInfo const* spellInfo) const;
+    uint32 GetRemainingGlobalCooldown(SpellInfo const* spellInfo) const;  // ms, 0 = none
     void AddGlobalCooldown(SpellInfo const* spellInfo, uint32 duration);
     void CancelGlobalCooldown(SpellInfo const* spellInfo);
 
