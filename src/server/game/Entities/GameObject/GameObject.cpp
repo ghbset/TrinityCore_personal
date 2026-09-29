@@ -1675,7 +1675,8 @@ void GameObject::Use(Unit* user)
             , TSPlayer(playerUser)
             , TSMutable<bool,bool>(&b)
         );
-        if (AI()->OnGossipHello(playerUser))
+        // A script that cancels has sent its own menu; the default use below would replace it.
+        if (b || AI()->OnGossipHello(playerUser))
         // @tswow-end
             return;
     }
