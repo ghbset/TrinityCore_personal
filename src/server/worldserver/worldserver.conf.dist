@@ -4489,3 +4489,11 @@ Movement.SmoothGroundPath = 1
 #        Default:     0
 
 Movement.SmoothGroundPath.MaxStep = 0
+
+#    Movement.Wander.MaxSteps
+#        Description: Most moves a wandering creature makes back to back before its 4-10 s pause.
+#                     Each burst is 1..MaxSteps moves. 2 = at most one immediate follow-on move.
+#                     0 = retail (2-10 moves in a row, which reads as shuttling A->B->A->B).
+#        Default:     2
+
+Movement.Wander.MaxSteps = 2

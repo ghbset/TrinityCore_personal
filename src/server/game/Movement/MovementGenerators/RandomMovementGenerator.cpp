@@ -16,6 +16,7 @@
  */
 
 #include "RandomMovementGenerator.h"
+#include "Config.h"
 #include "Creature.h"
 #include "Map.h"
 #include "MovementDefines.h"
@@ -23,6 +24,15 @@
 #include "MoveSplineInit.h"
 #include "PathGenerator.h"
 #include "Random.h"
+
+// Moves per wander burst before the 4-10 s pause. Retail: 2-10 back-to-back splines, which reads as a creature
+// shuttling A->B->A->B. Movement.Wander.MaxSteps caps it (default 2: at most one immediate follow-on move);
+// 0 restores retail's 2-10.
+static uint32 WanderBurst()
+{
+    static uint32 const maxSteps = uint32(sConfigMgr->GetIntDefault("Movement.Wander.MaxSteps", 2));
+    return maxSteps ? urand(1, maxSteps) : urand(2, 10);
+}
 
 template<class T>
 RandomMovementGenerator<T>::RandomMovementGenerator(float distance) : _timer(0), _reference(), _wanderDistance(distance), _wanderSteps(0)
@@ -86,8 +96,8 @@ void RandomMovementGenerator<Creature>::DoInitialize(Creature* owner)
     if (_wanderDistance == 0.f)
         _wanderDistance = owner->GetWanderDistance();
 
-    // Retail seems to let a creature walk 2 up to 10 splines before triggering a pause
-    _wanderSteps = urand(2, 10);
+    // Retail lets a creature walk 2 up to 10 splines before a pause; see WanderBurst
+    _wanderSteps = WanderBurst();
 
     _timer.Reset(0);
     _path = nullptr;
@@ -179,7 +189,7 @@ void RandomMovementGenerator<Creature>::SetRandomLocation(Creature* owner)
     {
         // Creature has made all its steps, time for a little break
         _timer.Reset(splineDuration + urand(4, 10) * IN_MILLISECONDS); // Retails seems to use rounded numbers so we do as well
-        _wanderSteps = urand(2, 10);
+        _wanderSteps = WanderBurst();
     }
 
     // Call for creature group update
