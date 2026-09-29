@@ -16,6 +16,9 @@
  */
 
 #include "Player.h"
+#include <array>
+#include <mutex>
+#include <unordered_map>
 #include "AccountMgr.h"
 #include "AchievementMgr.h"
 #include "ArenaTeam.h"
@@ -12664,18 +12667,51 @@ void Player::QuickEquipItem(uint16 pos, Item* pItem)
     }
 }
 
+// ---- Wardrobe (per-slot appearance overrides) -----------------------------------------------------
+// The wardrobe module (livescripts, via TSPlayer::SetAppearanceOverride) picks a look per equipment slot:
+// whatever item is worn there is drawn as that item entry instead, until the look is cleared. It is per
+// slot, not per item, so it survives gear swaps. Kept outside Player so the class layout (compiled into
+// livescripts) does not change; map threads update players in parallel, so the table is locked.
+namespace
+{
+    std::mutex s_wardrobeLock;
+    std::unordered_map<ObjectGuid::LowType, std::array<uint32, EQUIPMENT_SLOT_END>> s_wardrobe;
+
+    uint32 GetWardrobeAppearance(ObjectGuid::LowType guid, uint8 slot)
+    {
+        std::lock_guard<std::mutex> lock(s_wardrobeLock);
+        auto it = s_wardrobe.find(guid);
+        return it == s_wardrobe.end() || slot >= EQUIPMENT_SLOT_END ? 0 : it->second[slot];
+    }
+}
+
+/// @param itemEntry the item whose look to show in @p slot; 0 = the worn item's own look, WARDROBE_HIDDEN = nothing.
+TC_GAME_API void SetWardrobeAppearance(Player* player, uint8 slot, uint32 itemEntry)
+{
+    if (slot >= EQUIPMENT_SLOT_END)
+        return;
+    {
+        std::lock_guard<std::mutex> lock(s_wardrobeLock);
+        auto& looks = s_wardrobe[player->GetGUID().GetCounter()];   // value-initialised: all 0
+        looks[slot] = itemEntry;
+    }
+    player->SetVisibleItemSlot(slot, player->GetItemByPos(INVENTORY_SLOT_BAG_0, slot));
+}
+
 void Player::SetVisibleItemSlot(uint8 slot, Item* pItem)
 {
     if (pItem)
     {
         // @tswow-begin (Using Rochet2/Transmog)
-        if (uint32 entry = pItem->transmog)
-            SetUInt32Value(PLAYER_VISIBLE_ITEM_1_ENTRYID + (slot * 2), entry);
-        else
-            SetUInt32Value(PLAYER_VISIBLE_ITEM_1_ENTRYID + (slot * 2), pItem->GetEntry());
+        uint32 shown = pItem->transmog ? pItem->transmog : pItem->GetEntry();
         // @tswow-end
-        SetUInt16Value(PLAYER_VISIBLE_ITEM_1_ENCHANTMENT + (slot * 2), 0, pItem->GetEnchantmentId(PERM_ENCHANTMENT_SLOT));
-        SetUInt16Value(PLAYER_VISIBLE_ITEM_1_ENCHANTMENT + (slot * 2), 1, pItem->GetEnchantmentId(TEMP_ENCHANTMENT_SLOT));
+        uint32 const look = GetWardrobeAppearance(GetGUID().GetCounter(), slot);
+        bool const hidden = look == WARDROBE_HIDDEN;
+        if (look)
+            shown = hidden ? 0 : look;
+        SetUInt32Value(PLAYER_VISIBLE_ITEM_1_ENTRYID + (slot * 2), shown);
+        SetUInt16Value(PLAYER_VISIBLE_ITEM_1_ENCHANTMENT + (slot * 2), 0, hidden ? 0 : pItem->GetEnchantmentId(PERM_ENCHANTMENT_SLOT));
+        SetUInt16Value(PLAYER_VISIBLE_ITEM_1_ENCHANTMENT + (slot * 2), 1, hidden ? 0 : pItem->GetEnchantmentId(TEMP_ENCHANTMENT_SLOT));
     }
     else
     {

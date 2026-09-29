@@ -905,6 +905,10 @@ struct ResurrectionData
 
 #define SPELL_DK_RAISE_ALLY 46619
 
+// Wardrobe: per-slot appearance override (Player.cpp). WARDROBE_HIDDEN hides the slot's model.
+constexpr uint32 WARDROBE_HIDDEN = 0xFFFFFFFF;
+TC_GAME_API void SetWardrobeAppearance(Player* player, uint8 slot, uint32 itemEntry);
+
 class TC_GAME_API Player : public Unit, public GridObject<Player>
 {
     friend class WorldSession;
