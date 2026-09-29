@@ -4513,6 +4513,6 @@ SpellQueue.Enabled = 1
 #    SpellQueue.Window
 #        Description: How early (ms) a cast may arrive and still be held; the player's latency is added.
 #                     Keep it equal to the client extension's window.
-#        Default:     400
+#        Default:     150
 
-SpellQueue.Window = 400
+SpellQueue.Window = 150
