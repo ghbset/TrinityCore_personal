@@ -4468,3 +4468,24 @@ AOELoot.Range = 10.0
 #
 ###################################################################################################
 
+
+###################################################################################################
+# CREATURE PATH SMOOTHING
+#
+#    Movement.SmoothGroundPath
+#        Description: Round the corners of out-of-combat creature ground moves (Cataclysm-style:
+#                     resample the path, send it as Catmull-Rom) so creatures turn instead of
+#                     snapping at waypoints. Combat moves, pets and player-controlled units are
+#                     never affected. Read at startup.
+#        Default:     1 - (Enabled)
+#                     0 - (Disabled)
+
+Movement.SmoothGroundPath = 1
+
+#    Movement.SmoothGroundPath.MaxStep
+#        Description: Largest spacing of the resampled points, in yards. Corners are rounded over
+#                     about one step, so a smaller value means tighter corners (less corner-cutting
+#                     through walls). 0 = no cap (Cataclysm: the shortest leg of the path).
+#        Default:     0
+
+Movement.SmoothGroundPath.MaxStep = 0

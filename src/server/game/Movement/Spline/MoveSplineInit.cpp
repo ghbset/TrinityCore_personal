@@ -16,6 +16,7 @@
  */
 
 #include "MoveSplineInit.h"
+#include "Config.h"
 #include "Creature.h"
 #include "MoveSpline.h"
 #include "MovementPacketBuilder.h"
@@ -27,6 +28,53 @@
 
 namespace Movement
 {
+    // Cataclysm-style ground path smoothing (the 4.x client's `pathSmoothing`, 0x4CABF0 in 4.3.4): resample
+    // the polyline into points `step` apart (step = shortest segment over 1 yd), then send it as Catmull-Rom.
+    // Corners get rounded over about one step and the facing follows the curve, so creatures turn instead of
+    // snapping. The 3.3.5 client plays Catmull-Rom natively and its start control point already leans along
+    // the unit's facing (Spline::InitCatmullRom). Returns false (path untouched) when it would not help.
+    static bool SmoothGroundPath(PointsArray& path, float maxStep)
+    {
+        size_t const segs = path.size() - 1;
+        if (path.size() < 3)                        // one straight leg: nothing to round (Cata: same)
+            return false;
+
+        std::vector<float> len(segs);
+        float total = 0.0f;
+        for (size_t i = 0; i < segs; ++i)
+            total += len[i] = (path[i + 1] - path[i]).length();
+
+        float step = std::max(len[0], 1.0f);
+        for (size_t i = 1; i < segs; ++i)
+            if (len[i] > 1.0f && len[i] < step)
+                step = len[i];
+        if (maxStep > 0.0f && step > maxStep)
+            step = maxStep;
+        if (total / step + 4 + segs > 100)          // Cata's point budget; also keeps the packet small
+            return false;
+
+        PointsArray out;
+        out.reserve(size_t(total / step) + segs + 2);
+        auto add = [&out](G3D::Vector3 const& v)
+        {
+            if (out.empty() || (v - out.back()).squaredLength() > 2.38e-7f)
+                out.push_back(v);
+        };
+        for (size_t i = 0; i < segs; ++i)
+        {
+            add(path[i]);
+            if (len[i] > step)
+            {
+                int const m = int(len[i] / step);
+                for (int j = 1; j < m; ++j)
+                    add(path[i] + (path[i + 1] - path[i]) * (float(j) / m));
+            }
+        }
+        add(path.back());
+        path.swap(out);
+        return true;
+    }
+
     UnitMoveType SelectSpeedType(uint32 moveFlags)
     {
         if (moveFlags & MOVEMENTFLAG_FLYING)
@@ -89,6 +137,18 @@ namespace Movement
         // corrent first vertex
         args.path[0] = real_position;
         args.initialOrientation = real_position.orientation;
+
+        // Round the corners of out-of-combat creature ground moves (see SmoothGroundPath above). Combat moves
+        // (chase, flee, charge) stay exact, as retail's Steering is off in combat; pets and player-controlled
+        // units, transports, jumps, falls and already-smooth or cyclic splines are left alone.
+        static bool const smoothEnabled = sConfigMgr->GetBoolDefault("Movement.SmoothGroundPath", true);
+        static float const smoothMaxStep = sConfigMgr->GetFloatDefault("Movement.SmoothGroundPath.MaxStep", 0.0f);
+        if (smoothEnabled && !transport && unit->ToCreature() && !unit->IsControlledByPlayer() && !unit->IsInCombat()
+            && !(args.flags & (MoveSplineFlag::Mask_CatmullRom | MoveSplineFlag::Falling | MoveSplineFlag::Parabolic
+                               | MoveSplineFlag::Cyclic | MoveSplineFlag::OrientationFixed | MoveSplineFlag::Backward
+                               | MoveSplineFlag::Animation | MoveSplineFlag::TransportEnter | MoveSplineFlag::TransportExit))
+            && SmoothGroundPath(args.path, smoothMaxStep))
+            args.flags.EnableCatmullRom();
         args.flags.enter_cycle = args.flags.cyclic;
         move_spline.onTransport = transport;
 
