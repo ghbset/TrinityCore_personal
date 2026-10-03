@@ -2340,8 +2340,8 @@ MeleeHitOutcome Unit::RollMeleeOutcomeAgainst(Unit const* victim, WeaponAttackTy
     //   1. >    2. >    3. >       4. >    5. >   6. >       7. >  8.
     // MISS > DODGE > PARRY > GLANCING > BLOCK > CRIT > CRUSHING > HIT
 
-    int32    sum = 0, tmp = 0;
-    int32    roll = urand(0, 9999);
+    int32 tmp = 0;
+    Luck::TableRoll roll(Luck::Counters(this, victim));
 
     // check if attack comes from behind, nobody can parry or block if attacker is behind
     bool canParryOrBlock = victim->HasInArc(float(M_PI), this) || victim->HasAuraType(SPELL_AURA_IGNORE_HIT_DIRECTION);
@@ -2358,7 +2358,7 @@ MeleeHitOutcome Unit::RollMeleeOutcomeAgainst(Unit const* victim, WeaponAttackTy
 
     // 1. MISS
     tmp = miss_chance;
-    if (tmp > 0 && roll < (sum += tmp))
+    if (roll.Next(LUCK_MISS, tmp))
         return MELEE_HIT_MISS;
 
     // always crit against a sitting target (except 0 crit chance)
@@ -2369,8 +2369,7 @@ MeleeHitOutcome Unit::RollMeleeOutcomeAgainst(Unit const* victim, WeaponAttackTy
     if (canDodge)
     {
         tmp = dodge_chance;
-        if (tmp > 0                                         // check if unit _can_ dodge
-            && roll < (sum += tmp))
+        if (roll.Next(LUCK_DODGE, tmp))
             return MELEE_HIT_DODGE;
     }
 
@@ -2378,8 +2377,7 @@ MeleeHitOutcome Unit::RollMeleeOutcomeAgainst(Unit const* victim, WeaponAttackTy
     if (canParryOrBlock)
     {
         tmp = parry_chance;
-        if (tmp > 0                                         // check if unit _can_ parry
-            && roll < (sum += tmp))
+        if (roll.Next(LUCK_PARRY, tmp))
             return MELEE_HIT_PARRY;
     }
 
@@ -2398,7 +2396,7 @@ MeleeHitOutcome Unit::RollMeleeOutcomeAgainst(Unit const* victim, WeaponAttackTy
         // against level 82 elites - 18% chance of 15% average damage reduction (damage reduction range : 10-20%)
         tmp = 600 + (victimDefenseSkill - skill) * 120;
         tmp = std::min(tmp, 4000);
-        if (tmp > 0 && roll < (sum += tmp))
+        if (roll.Next(LUCK_NONE, tmp))
             return MELEE_HIT_GLANCING;
     }
 
@@ -2406,14 +2404,13 @@ MeleeHitOutcome Unit::RollMeleeOutcomeAgainst(Unit const* victim, WeaponAttackTy
     if (canParryOrBlock)
     {
         tmp = block_chance;
-        if (tmp > 0                                          // check if unit _can_ block
-            && roll < (sum += tmp))
+        if (roll.Next(LUCK_BLOCK, tmp))
             return MELEE_HIT_BLOCK;
     }
 
     // 6.CRIT
     tmp = crit_chance;
-    if (tmp > 0 && roll < (sum += tmp))
+    if (roll.Next(LUCK_CRIT, tmp))
         return MELEE_HIT_CRIT;
 
     // 7. CRUSHING
@@ -2434,7 +2431,7 @@ MeleeHitOutcome Unit::RollMeleeOutcomeAgainst(Unit const* victim, WeaponAttackTy
 
         // add 2% chance per lacking skill point
         tmp = tmp * 200 - 1500;
-        if (tmp > 0 && roll < (sum += tmp))
+        if (roll.Next(LUCK_NONE, tmp))
             return MELEE_HIT_CRUSHING;
     }
 
@@ -2603,18 +2600,16 @@ SpellMissInfo Unit::MeleeSpellHitResult(Unit* victim, SpellInfo const* spellInfo
 
     int32 skillDiff = attackerWeaponSkill - int32(victim->GetMaxSkillValueForLevel(this));
 
-    uint32 roll = urand(0, 9999);
+    Luck::TableRoll roll(Luck::Counters(this, victim));
 
-    uint32 missChance = uint32(MeleeSpellMissChance(victim, attType, skillDiff, spellInfo->Id) * 100.0f);
+    int32 missChance = int32(MeleeSpellMissChance(victim, attType, skillDiff, spellInfo->Id) * 100.0f);
     // Roll miss
-    uint32 tmp = missChance;
-    if (roll < tmp)
+    if (roll.Next(LUCK_MISS, missChance))
         return SPELL_MISS_MISS;
 
     // Chance resist mechanic
     int32 resist_chance = victim->GetMechanicResistChance(spellInfo) * 100;
-    tmp += resist_chance;
-    if (roll < tmp)
+    if (roll.Next(LUCK_SPELL_RESIST, resist_chance))
         return SPELL_MISS_RESIST;
 
     // Same spells cannot be parried/dodged
@@ -2643,8 +2638,7 @@ SpellMissInfo Unit::MeleeSpellHitResult(Unit* victim, SpellInfo const* spellInfo
         if (!victim->HasUnitState(UNIT_STATE_CONTROLLED) && (victim->HasInArc(float(M_PI), this) || victim->HasAuraType(SPELL_AURA_IGNORE_HIT_DIRECTION)))
         {
             int32 deflect_chance = victim->GetTotalAuraModifier(SPELL_AURA_DEFLECT_SPELLS) * 100;
-            tmp += deflect_chance;
-            if (roll < tmp)
+            if (roll.Next(LUCK_NONE, deflect_chance))
                 return SPELL_MISS_DEFLECT;
         }
     }
@@ -2699,7 +2693,7 @@ SpellMissInfo Unit::MeleeSpellHitResult(Unit* victim, SpellInfo const* spellInfo
         if (dodgeChance < 0)
             dodgeChance = 0;
 
-        if (roll < (tmp += dodgeChance))
+        if (roll.Next(LUCK_DODGE, dodgeChance))
             return SPELL_MISS_DODGE;
     }
 
@@ -2710,8 +2704,7 @@ SpellMissInfo Unit::MeleeSpellHitResult(Unit* victim, SpellInfo const* spellInfo
         if (parryChance < 0)
             parryChance = 0;
 
-        tmp += parryChance;
-        if (roll < tmp)
+        if (roll.Next(LUCK_PARRY, parryChance))
             return SPELL_MISS_PARRY;
     }
 
@@ -2720,9 +2713,7 @@ SpellMissInfo Unit::MeleeSpellHitResult(Unit* victim, SpellInfo const* spellInfo
         int32 blockChance = int32(GetUnitBlockChance(attType, victim) * 100.0f);
         if (blockChance < 0)
             blockChance = 0;
-        tmp += blockChance;
-
-        if (roll < tmp)
+        if (roll.Next(LUCK_BLOCK, blockChance))
             return SPELL_MISS_BLOCK;
     }
 
@@ -6876,6 +6867,16 @@ float Unit::SpellDamagePctDone(Unit* victim, SpellInfo const* spellProto, Damage
         for (uint32 i = 0; i < MAX_SPELL_SCHOOL; ++i)
             if (spellProto->GetSchoolMask() & (1 << i))
                 maxModDamagePercentSchool = std::max(maxModDamagePercentSchool, GetFloatValue(PLAYER_FIELD_MOD_DAMAGE_DONE_PCT + i));
+
+        // forever_classes: an aura that needs an item (Wand Specialization) only boosts spells that use that item
+        // (Shoot); the player field above sums it into every spell of its school while the item is equipped.
+        maxModDamagePercentSchool /= GetTotalAuraMultiplier(SPELL_AURA_MOD_DAMAGE_PERCENT_DONE, [spellProto](AuraEffect const* aurEff) -> bool
+        {
+            SpellInfo const* req = aurEff->GetSpellInfo();
+            return req->EquippedItemClass != -1 && (aurEff->GetMiscValue() & spellProto->GetSchoolMask())
+                && !(spellProto->EquippedItemClass == req->EquippedItemClass
+                     && (spellProto->EquippedItemSubClassMask & req->EquippedItemSubClassMask));
+        });
     }
     else
         maxModDamagePercentSchool = GetTotalAuraMultiplierByMiscMask(SPELL_AURA_MOD_DAMAGE_PERCENT_DONE, spellProto->GetSchoolMask());
@@ -7126,12 +7127,11 @@ float Unit::SpellDamagePctDone(Unit* victim, SpellInfo const* spellProto, Damage
                 if (uint8 count = victim->GetDoTsByCaster(GetOwnerGUID()))
                     AddPct(DoneTotalMod, 15 * count);
 
-            // Drain Soul - If the target is at or below 25% health, Drain Soul causes four times the normal damage
-            if (spellProto->SpellFamilyFlags[0] & 0x00004000 && !victim->HealthAbovePct(25))
-                DoneTotalMod *= 4;
+            // (forever_classes: no Drain Soul execute bonus - Forever's Drain Soul has none)
 
             // Don't let Conflagrate double dip from damage done bonuses (from Immolate/Shadowflame and then for itself)
-            if (spellProto->SpellFamilyFlags[1] & 0x800000)
+            // forever_classes: only WotLK's Conflagrate (it consumes the DoT); Forever's is a plain nuke
+            if ((spellProto->SpellFamilyFlags[1] & 0x800000) && spellProto->TargetAuraState == AURA_STATE_CONFLAGRATE)
                 DoneTotalMod = 1.0f;
             break;
         case SPELLFAMILY_HUNTER:
@@ -7218,6 +7218,16 @@ uint32 Unit::SpellDamageBonusTaken(Unit* caster, SpellInfo const* spellProto, ui
                 if (aurEff->GetCasterGUID() == caster->GetGUID() && aurEff->IsAffectedOnSpell(spellProto))
                     return true;
                 return false;
+            });
+
+            TakenTotalMod *= GetTotalAuraMultiplier(SPELL_AURA_MOD_SCHOOL_MASK_DAMAGE_FROM_CASTER, [caster, spellProto](AuraEffect const* aurEff) -> bool
+            {
+                return aurEff->GetCasterGUID() == caster->GetGUID() && (aurEff->GetMiscValue() & spellProto->GetSchoolMask());
+            });
+
+            TakenTotalMod *= GetTotalAuraMultiplier(SPELL_AURA_MOD_SPELL_DAMAGE_FROM_CASTER, [caster, spellProto](AuraEffect const* aurEff) -> bool
+            {
+                return aurEff->GetCasterGUID() == caster->GetGUID() && aurEff->IsAffectedOnSpell(spellProto);
             });
         }
     }
@@ -7447,14 +7457,7 @@ float Unit::SpellCritChanceTaken(Unit const* caster, SpellInfo const* spellInfo,
                         }
                         break;
                     case SPELLFAMILY_SHAMAN:
-                        // Lava Burst
-                        if (spellInfo->SpellFamilyFlags[1] & 0x00001000)
-                        {
-                            if (GetAuraEffect(SPELL_AURA_PERIODIC_DAMAGE, SPELLFAMILY_SHAMAN, 0x10000000, 0, 0, caster->GetGUID()))
-                                if (GetTotalAuraModifier(SPELL_AURA_MOD_ATTACKER_SPELL_AND_WEAPON_CRIT_CHANCE) > -100)
-                                    return 100.0f;
-                            break;
-                        }
+                        // forever_talents: Lava Burst's Flame Shock auto-crit removed (Forever: +20% damage, aura 271 on Flame Shock)
                         break;
                 }
 
@@ -7515,6 +7518,11 @@ float Unit::SpellCritChanceTaken(Unit const* caster, SpellInfo const* spellInfo,
             if (aurEff->GetCasterGUID() == caster->GetGUID() && aurEff->IsAffectedOnSpell(spellInfo))
                 return true;
             return false;
+        });
+
+        crit_chance += GetTotalAuraModifier(SPELL_AURA_MOD_CRIT_CHANCE_FOR_CASTER_WITH_ABILITIES, [caster, spellInfo](AuraEffect const* aurEff) -> bool
+        {
+            return aurEff->GetCasterGUID() == caster->GetGUID() && aurEff->IsAffectedOnSpell(spellInfo);
         });
 
         // @duskhaven-port
@@ -7735,6 +7743,15 @@ uint32 Unit::SpellHealingBonusDone(Unit* victim, SpellInfo const* spellProto, ui
         if (spellProto->DmgClass == SPELL_DAMAGE_CLASS_NONE)
             return uint32(std::max(healamount * DoneTotalMod, 0.0f));
     }
+
+    // forever_classes: Blessing of Light - a paladin blessing's DUMMY on the healed target whose effect class mask hits
+    // this heal adds its amount (flat, with the downrank penalty). Word-0 bit 0x10000000 is Forever's blessing bit.
+    DoneTotal += int32(victim->GetTotalAuraModifier(SPELL_AURA_DUMMY, [spellProto](AuraEffect const* aurEff) -> bool
+    {
+        SpellInfo const* bless = aurEff->GetSpellInfo();
+        return bless->SpellFamilyName == SPELLFAMILY_PALADIN && (bless->SpellFamilyFlags[0] & 0x10000000)
+            && !bless->IsPassive() && aurEff->IsAffectedOnSpell(spellProto);
+    }) * CalculateSpellpowerCoefficientLevelPenalty(spellProto));
 
     // Default calculation
     if (DoneAdvertisedBenefit)
@@ -8395,6 +8412,16 @@ uint32 Unit::MeleeDamageBonusTaken(Unit* attacker, uint32 pdamage, WeaponAttackT
             if (aurEff->GetCasterGUID() == attacker->GetGUID() && aurEff->IsAffectedOnSpell(spellProto))
                 return true;
             return false;
+        });
+
+        TakenTotalMod *= GetTotalAuraMultiplier(SPELL_AURA_MOD_SCHOOL_MASK_DAMAGE_FROM_CASTER, [attacker, spellProto](AuraEffect const* aurEff) -> bool
+        {
+            return aurEff->GetCasterGUID() == attacker->GetGUID() && (aurEff->GetMiscValue() & spellProto->GetSchoolMask());
+        });
+
+        TakenTotalMod *= GetTotalAuraMultiplier(SPELL_AURA_MOD_SPELL_DAMAGE_FROM_CASTER, [attacker, spellProto](AuraEffect const* aurEff) -> bool
+        {
+            return aurEff->GetCasterGUID() == attacker->GetGUID() && aurEff->IsAffectedOnSpell(spellProto);
         });
 
         // Mod damage from spell mechanic
@@ -12644,7 +12671,11 @@ float Unit::MeleeSpellMissChance(Unit const* victim, WeaponAttackType attType, i
         missChance -= m_modMeleeHitChance;
 
     // miss chance from auras after calculating skill based miss
-    missChance -= GetTotalAuraModifier(SPELL_AURA_MOD_HIT_CHANCE);
+    // forever_talents: MiscValueB 1 = off-hand only (Dual Wield Specialization)
+    missChance -= GetTotalAuraModifier(SPELL_AURA_MOD_HIT_CHANCE, [attType](AuraEffect const* aurEff)
+    {
+        return aurEff->GetMiscValueB() != 1 || attType == OFF_ATTACK;
+    });
     if (attType == RANGED_ATTACK)
         missChance -= victim->GetTotalAuraModifier(SPELL_AURA_MOD_ATTACKER_RANGED_HIT_CHANCE);
     else
@@ -13596,8 +13627,8 @@ void Unit::RewardRage(uint32 damage, uint32 weaponSpeedHitFactor, bool attacker)
     {
         addRage = damage / rageconversion * 2.5f;
 
-        // Berserker Rage effect
-        if (HasAura(18499))
+        // Berserker Rage effect (forever_classes: its clones too, found by Berserker Rage's family bit 0x10000000)
+        if (HasAura(18499) || HasAuraTypeWithFamilyFlags(SPELL_AURA_MECHANIC_IMMUNITY, SPELLFAMILY_WARRIOR, flag96(0x10000000, 0, 0)))
             addRage *= 2.0f;
     }
 

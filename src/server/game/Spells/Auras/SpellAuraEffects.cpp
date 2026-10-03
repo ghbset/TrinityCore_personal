@@ -381,6 +381,10 @@ pAuraEffectHandler AuraEffectHandler[TOTAL_AURAS]=
     &AuraEffect::HandlePreventResurrection,                       //314 SPELL_AURA_PREVENT_RESURRECTION todo
     &AuraEffect::HandleNoImmediateEffect,                         //315 SPELL_AURA_UNDERWATER_WALKING todo
     &AuraEffect::HandleNoImmediateEffect,                         //316 SPELL_AURA_PERIODIC_HASTE implemented in AuraEffect::CalculatePeriodic
+    &AuraEffect::HandleNoImmediateEffect,                         //317 SPELL_AURA_MOD_SCHOOL_MASK_DAMAGE_FROM_CASTER implemented in Unit::SpellDamageBonusTaken and Unit::MeleeDamageBonusTaken
+    &AuraEffect::HandleNoImmediateEffect,                         //318 SPELL_AURA_MOD_SPELL_DAMAGE_FROM_CASTER implemented in Unit::SpellDamageBonusTaken and Unit::MeleeDamageBonusTaken
+    &AuraEffect::HandleNoImmediateEffect,                         //319 SPELL_AURA_MOD_CRIT_CHANCE_FOR_CASTER_WITH_ABILITIES implemented in Unit::GetUnitSpellCriticalChance
+    &AuraEffect::HandleNoImmediateEffect,                         //320 SPELL_AURA_OVERRIDE_SPELL implemented in WorldSession::HandleCastSpellOpcode
 };
 
 AuraEffect::AuraEffect(Aura* base, SpellEffectInfo const& spellEfffectInfo, int32 const* baseAmount, Unit* caster):
@@ -972,6 +976,8 @@ bool AuraEffect::CheckEffectProc(AuraApplication* aurApp, ProcEventInfo& eventIn
                 return false;
             break;
         case SPELL_AURA_MOD_DAMAGE_FROM_CASTER:
+        case SPELL_AURA_MOD_SCHOOL_MASK_DAMAGE_FROM_CASTER:
+        case SPELL_AURA_MOD_SPELL_DAMAGE_FROM_CASTER:
             // Compare casters
             if (GetCasterGUID() != eventInfo.GetActor()->GetGUID())
                 return false;
@@ -1147,8 +1153,11 @@ void AuraEffect::HandleShapeshiftBoosts(Unit* target, bool apply) const
             spellId2 = 27795;                               // must be second, this important at aura remove to prevent to early iterator invalidation.
             break;
         case FORM_SHADOW:
-            spellId = 49868;
-            spellId2 = 71167;
+            if (GetId() == 15473)                   // forever_classes: WotLK's -30% threat / DoT haste only for stock Shadowform
+            {
+                spellId = 49868;
+                spellId2 = 71167;
+            }
             break;
         case FORM_GHOSTWOLF:
             spellId = 67116;
@@ -5189,7 +5198,7 @@ void AuraEffect::HandlePeriodicDamageAurasTick(Unit* target, Unit* caster) const
         , TSAuraEffect(const_cast<AuraEffect*>(this))
         , TSMutableNumber<float>(&crit_chance)
     );
-    bool crit = roll_chance_f(crit_chance);
+    bool crit = Luck::Roll(Luck::Counters(caster, target), LUCK_SPELL_CRIT, crit_chance);
     // @tswow-end
     if (crit)
         damage = Unit::SpellCriticalDamageBonus(caster, m_spellInfo, damage, target);
@@ -5291,7 +5300,7 @@ void AuraEffect::HandlePeriodicHealthLeechAuraTick(Unit* target, Unit* caster) c
         , TSAuraEffect(const_cast<AuraEffect*>(this))
         , TSMutableNumber<float>(&crit_chance)
     );
-    bool crit = roll_chance_f(crit_chance);
+    bool crit = Luck::Roll(Luck::Counters(caster, target), LUCK_SPELL_CRIT, crit_chance);
     // @tswow-end
     if (crit)
         damage = Unit::SpellCriticalDamageBonus(caster, m_spellInfo, damage, target);
@@ -5439,7 +5448,7 @@ void AuraEffect::HandlePeriodicHealAurasTick(Unit* target, Unit* caster) const
         , TSAuraEffect(const_cast<AuraEffect*>(this))
         , TSMutableNumber<float>(&crit_chance)
     );
-    bool crit = roll_chance_f(crit_chance);
+    bool crit = Luck::Roll(Luck::Counters(caster, target), LUCK_SPELL_CRIT, crit_chance);
     // @tswow-end
     if (crit)
         damage = Unit::SpellCriticalHealingBonus(caster, m_spellInfo, damage, target);

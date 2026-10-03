@@ -230,6 +230,9 @@ struct TC_GAME_API Loot
     bool generateNormally = true;
     // @tswow-end
 
+    // Quest items decided by per-player marble bags: only these players may loot them
+    std::unordered_map<uint32, GuidSet> questBagWinners;
+
     // GUIDLow of container that holds this loot (item_instance.entry)
     //  Only set for inventory items that can be right-click looted
     uint32 containerID;

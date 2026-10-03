@@ -27,9 +27,8 @@ enum BG_WS_TimerOrScore
     BG_WS_FLAG_RESPAWN_TIME = 23000,
     // @custom-begin: anti-turtle rules. Holding the enemy flag used to be a
     // perfect denial - while you held it the other team could not score, so
-    // sitting on it was risk-free and matches ran for hours. These make
-    // defending buy tempo rather than immunity.
-    BG_WS_CONTESTED_CAPTURE_MS = 3000,      // channel to score with your own flag out
+    // sitting on it was risk-free and matches ran for hours. A carrier now
+    // scores on reaching its flag spawn whether or not its own flag is home.
     BG_WS_FLAG_IDLE_RETURN_MS  = 20000,     // carrier safe and idle at home: flag goes back
     BG_WS_PIN_UPDATE_MS        = 1000,      // how often the map-pin addon is fed
     // tswow custom packet opcode the WSGFlagPins addon listens on. Picked high
@@ -234,9 +233,6 @@ class BattlegroundWS : public Battleground
         bool IsAllianceFlagPickedup() const         { return !m_FlagKeepers[TEAM_ALLIANCE].IsEmpty(); }
         bool IsHordeFlagPickedup() const            { return !m_FlagKeepers[TEAM_HORDE].IsEmpty(); }
         // @custom-begin: anti-turtle rules
-        void BeginContestedCapture(Player* player, TeamId capturingTeam);
-        void CancelContestedCapture(TeamId capturingTeam, char const* why);
-        void UpdateContestedCapture(uint32 diff);
         void UpdateFlagIdleDecay(uint32 diff);
         void SendFlagPinUpdate(uint32 diff);
         void ReturnCarriedFlagHome(TeamId flagTeam);
@@ -287,14 +283,12 @@ class BattlegroundWS : public Battleground
         ObjectGuid m_DroppedFlagGUID[2];
         uint8 _flagState[2];                               // for checking flag state
         // @custom-begin: anti-turtle rules
-        struct ContestedCapture
+        // Carried or dropped: out in the field, so its stand must stay empty.
+        bool IsFlagInField(TeamId team) const
         {
-            ObjectGuid player;
-            uint32 elapsedMs = 0;
-            uint32 lastHealth = 0;
-            float x = 0.0f, y = 0.0f, z = 0.0f;
-        };
-        ContestedCapture _contestedCapture[2];
+            return _flagState[team] == BG_WS_FLAG_STATE_ON_PLAYER ||
+                _flagState[team] == BG_WS_FLAG_STATE_ON_GROUND;
+        }
         uint32 _flagIdleMs[2] = { 0, 0 };
         uint32 _pinUpdateMs = 0;
         // @custom-end

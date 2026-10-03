@@ -218,13 +218,23 @@ namespace Trinity
             }
 
             // @tswow-begin
-            FIRE_ID(
-                  creature->GetCreatureTemplate()->events.id
-                , Creature,OnCalcBaseGain
-                , TSCreature(creature)
-                , TSMutableNumber<uint32>(&baseGain)
-                , TSPlayer(player)
-            );
+            // Gain() below deliberately passes a null creature for a
+            // player-versus-player kill - its guard reads
+            // `if (!creature || creature->CanGiveExperience())` - so there is
+            // no creature here whose event could fire. Dereferencing it
+            // segfaulted the worldserver on the first battleground kill this
+            // realm ever saw (Battleground::HandleKillPlayer ->
+            // RewardXPAtKill -> KillRewarder -> XP::Gain -> here).
+            if (creature)
+            {
+                FIRE_ID(
+                      creature->GetCreatureTemplate()->events.id
+                    , Creature,OnCalcBaseGain
+                    , TSCreature(creature)
+                    , TSMutableNumber<uint32>(&baseGain)
+                    , TSPlayer(player)
+                );
+            }
             // @tswow-end
             sScriptMgr->OnBaseGainCalculation(baseGain, pl_level, mob_level, content);
             return baseGain;
@@ -266,13 +276,21 @@ namespace Trinity
 
             sScriptMgr->OnGainCalculation(gain, player, u);
             // @tswow-begin
-            FIRE_ID(
-                creature->GetCreatureTemplate()->events.id
-                , Creature,OnCalcGain
-                , TSCreature(creature)
-                , TSMutableNumber<uint32>(&gain)
-                , TSPlayer(player)
-            );
+            // Same hazard as BaseGain() above: `creature` is null when the
+            // victim is a player (battleground / world PvP kill), and the
+            // `!creature ||` guard at the top of this function is what lets
+            // that case reach here. Unguarded, this hook segfaulted the map
+            // update thread on the first PvP kill after BaseGain() was fixed.
+            if (creature)
+            {
+                FIRE_ID(
+                    creature->GetCreatureTemplate()->events.id
+                    , Creature,OnCalcGain
+                    , TSCreature(creature)
+                    , TSMutableNumber<uint32>(&gain)
+                    , TSPlayer(player)
+                );
+            }
             // @tswow-end
             return gain;
         }

@@ -17,10 +17,34 @@
 
 // This is where scripts' loading functions should be declared:
 void AddSC_Transmogrification();
+void AddSC_setnewspawn_commandscript();
+void AddSC_npc_forever_summon_hawk();
+void AddSC_forever_talents_druid();
+void AddSC_forever_talents_hunter();
+void AddSC_forever_talents_mage();
+void AddSC_forever_talents_paladin();
+void AddSC_forever_talents_priest();
+void AddSC_forever_talents_rogue();
+void AddSC_forever_talents_shaman();
+void AddSC_forever_talents_warlock();
+void AddSC_forever_talents_warrior();
+void AddSC_forever_racials();
 
 // The name of this function should match:
 // void Add${NameOfDirectory}Scripts()
 void AddCustomScripts()
 {
     AddSC_Transmogrification();
+    AddSC_setnewspawn_commandscript();
+    AddSC_npc_forever_summon_hawk();
+    AddSC_forever_talents_druid();
+    AddSC_forever_talents_hunter();
+    AddSC_forever_talents_mage();
+    AddSC_forever_talents_paladin();
+    AddSC_forever_talents_priest();
+    AddSC_forever_talents_rogue();
+    AddSC_forever_talents_shaman();
+    AddSC_forever_talents_warlock();
+    AddSC_forever_talents_warrior();
+    AddSC_forever_racials();
 }

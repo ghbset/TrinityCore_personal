@@ -91,7 +91,6 @@ void BattlegroundWS::PostUpdateImpl(uint32 diff)
     if (GetStatus() == STATUS_IN_PROGRESS)
     {
         // @custom-begin: anti-turtle rules
-        UpdateContestedCapture(diff);
         UpdateFlagIdleDecay(diff);
         SendFlagPinUpdate(diff);
         // @custom-end
@@ -266,8 +265,6 @@ namespace
     // A carrier within this of its own start is "at home" - the corner a
     // turtling team sits in.
     constexpr float BG_WS_HOME_RADIUS = 50.0f;
-    // How far a capture channel may drift before it breaks.
-    constexpr float BG_WS_CAPTURE_LEASH = 8.0f;
 }
 
 void BattlegroundWS::SayToBattleground(std::string const& line)
@@ -276,89 +273,6 @@ void BattlegroundWS::SayToBattleground(std::string const& line)
         if (Player* listener = ObjectAccessor::FindPlayer(itr.first))
             if (WorldSession* session = listener->GetSession())
                 ChatHandler(session).SendSysMessage(line.c_str());
-}
-
-void BattlegroundWS::BeginContestedCapture(Player* player, TeamId capturingTeam)
-{
-    if (!player || GetStatus() != STATUS_IN_PROGRESS)
-        return;
-    ContestedCapture& channel = _contestedCapture[capturingTeam];
-    if (channel.player == player->GetGUID())
-        return;                                 // already channelling
-
-    channel.player = player->GetGUID();
-    channel.elapsedMs = 0;
-    channel.lastHealth = player->GetHealth();
-    channel.x = player->GetPositionX();
-    channel.y = player->GetPositionY();
-    channel.z = player->GetPositionZ();
-
-    // Announced deliberately: a contested capture is a thing defenders are
-    // meant to run at and interrupt, which is the whole point of it.
-    SayToBattleground(player->GetName() + " is capturing the flag! Interrupt them!");
-    TC_LOG_INFO("bg.battleground", "[WSG] contested capture STARTED by {} (own flag is out)",
-        player->GetName());
-}
-
-void BattlegroundWS::CancelContestedCapture(TeamId capturingTeam, char const* why)
-{
-    ContestedCapture& channel = _contestedCapture[capturingTeam];
-    if (channel.player.IsEmpty())
-        return;
-    channel.player.Clear();
-    channel.elapsedMs = 0;
-    TC_LOG_INFO("bg.battleground", "[WSG] contested capture BROKEN: {}", why ? why : "carrier lost");
-    if (why)
-        SayToBattleground(std::string("The capture was interrupted: ") + why + ".");
-}
-
-void BattlegroundWS::UpdateContestedCapture(uint32 diff)
-{
-    for (uint8 team = 0; team < 2; ++team)
-    {
-        ContestedCapture& channel = _contestedCapture[team];
-        if (channel.player.IsEmpty())
-            continue;
-
-        Player* player = ObjectAccessor::FindPlayer(channel.player);
-        if (!player || !player->IsAlive() || player->GetBattleground() != this)
-        {
-            CancelContestedCapture(TeamId(team), nullptr);
-            continue;
-        }
-
-        // Still holding the flag it came to score?
-        const TeamId flagTeam = team == TEAM_ALLIANCE ? TEAM_HORDE : TEAM_ALLIANCE;
-        if (GetFlagPickerGUID(flagTeam) != player->GetGUID())
-        {
-            CancelContestedCapture(TeamId(team), nullptr);
-            continue;
-        }
-
-        // Broken by damage. Comparing health is the cheapest honest test for
-        // "someone hit them" and needs no hook into the damage path.
-        if (player->GetHealth() < channel.lastHealth)
-        {
-            CancelContestedCapture(TeamId(team), "the carrier was attacked");
-            continue;
-        }
-        channel.lastHealth = player->GetHealth();
-
-        if (!player->IsWithinDist3d(channel.x, channel.y, channel.z, BG_WS_CAPTURE_LEASH))
-        {
-            CancelContestedCapture(TeamId(team), "the carrier moved away");
-            continue;
-        }
-
-        channel.elapsedMs += diff;
-        if (channel.elapsedMs >= BG_WS_CONTESTED_CAPTURE_MS)
-        {
-            channel.player.Clear();
-            channel.elapsedMs = 0;
-            TC_LOG_INFO("bg.battleground", "[WSG] contested capture COMPLETED by {}", player->GetName());
-            EventPlayerCapturedFlag(player);
-        }
-    }
 }
 
 void BattlegroundWS::ReturnCarriedFlagHome(TeamId flagTeam)
@@ -529,8 +443,13 @@ void BattlegroundWS::RespawnFlag(uint32 Team, bool captured)
     if (captured)
     {
         //when map_update will be allowed for battlegrounds this code will be useless
-        SpawnBGObject(BG_WS_OBJECT_H_FLAG, RESPAWN_IMMEDIATELY);
-        SpawnBGObject(BG_WS_OBJECT_A_FLAG, RESPAWN_IMMEDIATELY);
+        // @custom-begin: same as at the capture - a flag still out in the
+        // field keeps its stand empty.
+        if (!IsFlagInField(TEAM_HORDE))
+            SpawnBGObject(BG_WS_OBJECT_H_FLAG, RESPAWN_IMMEDIATELY);
+        if (!IsFlagInField(TEAM_ALLIANCE))
+            SpawnBGObject(BG_WS_OBJECT_A_FLAG, RESPAWN_IMMEDIATELY);
+        // @custom-end
         SendBroadcastText(BG_WS_TEXT_FLAGS_PLACED, CHAT_MSG_BG_SYSTEM_NEUTRAL);
         PlaySoundToAll(BG_WS_SOUND_FLAGS_RESPAWNED);        // flag respawned sound...
     }
@@ -611,8 +530,14 @@ void BattlegroundWS::EventPlayerCapturedFlag(Player* player)
     //for flag capture is reward 2 honorable kills
     RewardHonorToTeam(GetBonusHonorFromKill(2), player->GetTeam());
 
-    SpawnBGObject(BG_WS_OBJECT_H_FLAG, BG_WS_FLAG_RESPAWN_TIME);
-    SpawnBGObject(BG_WS_OBJECT_A_FLAG, BG_WS_FLAG_RESPAWN_TIME);
+    // @custom-begin: a capture resets the flags, but the scorer's own flag may
+    // still be out in the field now that scoring does not need it home.
+    // Respawning its stand would put a second copy of it on the base.
+    if (!IsFlagInField(TEAM_HORDE))
+        SpawnBGObject(BG_WS_OBJECT_H_FLAG, BG_WS_FLAG_RESPAWN_TIME);
+    if (!IsFlagInField(TEAM_ALLIANCE))
+        SpawnBGObject(BG_WS_OBJECT_A_FLAG, BG_WS_FLAG_RESPAWN_TIME);
+    // @custom-end
 
     if (player->GetTeam() == ALLIANCE)
         SendBroadcastText(BG_WS_TEXT_CAPTURED_HORDE_FLAG, CHAT_MSG_BG_SYSTEM_ALLIANCE, player);
@@ -946,26 +871,16 @@ void BattlegroundWS::HandleAreaTrigger(Player* player, uint32 trigger)
         case 3709:                                          // Horde elixir of berserk spawn
             //buff_guid = BgObjects[BG_WS_OBJECT_BERSERKBUFF_2];
             break;
-        // @custom-begin: your own flag being out no longer denies the score,
-        // it only makes it slower and interruptible. Instant with your flag
-        // home, a channel without it - so defending buys tempo, not immunity.
+        // @custom-begin: reaching your flag spawn with the enemy flag scores,
+        // whether or not your own flag is home. Holding a flag no longer
+        // denies the other team's capture, so turtling buys nothing.
         case 3646:                                          // Alliance Flag spawn
             if (_flagState[TEAM_HORDE] && GetFlagPickerGUID(TEAM_HORDE) == player->GetGUID())
-            {
-                if (!_flagState[TEAM_ALLIANCE])
-                    EventPlayerCapturedFlag(player);
-                else
-                    BeginContestedCapture(player, TEAM_ALLIANCE);
-            }
+                EventPlayerCapturedFlag(player);
             break;
         case 3647:                                          // Horde Flag spawn
             if (_flagState[TEAM_ALLIANCE] && GetFlagPickerGUID(TEAM_ALLIANCE) == player->GetGUID())
-            {
-                if (!_flagState[TEAM_HORDE])
-                    EventPlayerCapturedFlag(player);
-                else
-                    BeginContestedCapture(player, TEAM_HORDE);
-            }
+                EventPlayerCapturedFlag(player);
             break;
         // @custom-end
         case 3649:                                          // unk1
@@ -1045,8 +960,6 @@ void BattlegroundWS::Reset()
     _flagState[TEAM_ALLIANCE]        = BG_WS_FLAG_STATE_ON_BASE;
     _flagState[TEAM_HORDE]           = BG_WS_FLAG_STATE_ON_BASE;
     // @custom-begin: anti-turtle rules
-    _contestedCapture[TEAM_ALLIANCE] = ContestedCapture();
-    _contestedCapture[TEAM_HORDE]    = ContestedCapture();
     _flagIdleMs[TEAM_ALLIANCE]       = 0;
     _flagIdleMs[TEAM_HORDE]          = 0;
     // @custom-end

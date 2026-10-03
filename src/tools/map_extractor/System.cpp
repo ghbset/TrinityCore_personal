@@ -145,11 +145,12 @@ void HandleArgs(int argc, char * arg[])
         Usage(options, "Error: uneven set of tile coordinates");
     }
 
-    for (unsigned i = 0; i < tiles.size() / 2; ++i)
-    {
-        unsigned nxt = i + 1;
-        extracted_adts.insert({ tiles[i],tiles[nxt] });
-    }
+    // --tiles is a flat x,y coord list: consume it as PAIRS (step by 2). Stepping by 1 with nxt=i+1
+    // turned --tiles=a,b,c,d into (a,b),(b,c),(c,d) -- overlapping, wrong tiles -- so any request for
+    // more than a single tile extracted the wrong set (a single pair happened to work, which is what
+    // hid this). Same fix as mmaps_generator's PathGenerator.cpp, which already carried it.
+    for (unsigned i = 0; i + 1 < tiles.size(); i += 2)
+        extracted_adts.insert({ tiles[i], tiles[i + 1] });
 
     use_directories = result["d"].as<int>();
 

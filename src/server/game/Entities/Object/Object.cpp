@@ -2598,10 +2598,8 @@ SpellMissInfo WorldObject::MagicSpellHitResult(Unit* victim, SpellInfo const* sp
 
     RoundToInterval(HitChance, 0, 10000);
 
-    int32 tmp = 10000 - HitChance;
-
-    int32 rand = irand(0, 9999);
-    if (tmp > 0 && rand < tmp)
+    Luck::TableRoll roll(Luck::Counters(this, victim));
+    if (roll.Next(LUCK_SPELL_MISS, 10000 - HitChance))
         return SPELL_MISS_MISS;
 
     // Chance resist mechanic (select max value from every mechanic spell effect)
@@ -2640,7 +2638,7 @@ SpellMissInfo WorldObject::MagicSpellHitResult(Unit* victim, SpellInfo const* sp
     // @tswow-end
 
     // Roll chance
-    if (resist_chance > 0 && rand < (tmp += resist_chance))
+    if (roll.Next(LUCK_SPELL_RESIST, resist_chance))
         return SPELL_MISS_RESIST;
 
     // cast by caster in front of victim
@@ -2657,7 +2655,7 @@ SpellMissInfo WorldObject::MagicSpellHitResult(Unit* victim, SpellInfo const* sp
             , TSUnit(victim)
         );
         // @tswow-end
-        if (deflect_chance > 0 && rand < (tmp += deflect_chance))
+        if (roll.Next(LUCK_NONE, deflect_chance))
             return SPELL_MISS_DEFLECT;
     }
 

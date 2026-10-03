@@ -28,6 +28,7 @@
 #include "TotemAI.h"
 // @tswow-begin
 #include "TotemCreatureAI.h"
+#include "TSScriptedAI.h"
 // @tswow-end
 
 #include "MovementGenerator.h"
@@ -47,6 +48,7 @@ namespace AIRegistry
         (new CreatureAIFactory<TotemAI, false>("TotemAI"))->RegisterSelf();
         // @tswow-begin
         (new CreatureAIFactory<TotemCreatureAI, false>("TotemCreatureAI"))->RegisterSelf();
+        (new CreatureAIFactory<TSScriptedAI>("TSScriptedAI"))->RegisterSelf();
         // @tswow-end
         (new CreatureAIFactory<CombatAI>("CombatAI"))->RegisterSelf();
         (new CreatureAIFactory<ArcherAI>("ArcherAI"))->RegisterSelf();

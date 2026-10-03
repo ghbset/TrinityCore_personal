@@ -127,7 +127,7 @@ void Totem::UnSummon(uint32 msTime)
 
     // Remove Sentry Totem Aura
     if (GetEntry() == SENTRY_TOTEM_ENTRY)
-        GetOwner()->RemoveAurasDueToSpell(SENTRY_TOTEM_SPELLID);
+        GetOwner()->RemoveAurasDueToSpell(GetUInt32Value(UNIT_CREATED_BY_SPELL));   // forever_classes: our Sentry clone too
 
     //remove aura all party members too
     if (Player* owner = GetOwner()->ToPlayer())

@@ -317,6 +317,9 @@ class TC_GAME_API Group
         void NeedBeforeGreed(Loot* loot, WorldObject* pLootedObject);
         void MasterLoot(Loot* loot, WorldObject* pLootedObject);
         Rolls::iterator GetRoll(ObjectGuid Guid);
+        // @custom: managed bots have no client to receive SMSG_LOOT_START_ROLL,
+        // so they read the pending rolls to vote on them.
+        Rolls const& GetRolls() const { return RollId; }
         void CountTheRoll(Rolls::iterator roll, Map* allowedMap);
         bool CountRollVote(ObjectGuid playerGUID, ObjectGuid Guid, uint8 Choise);
         void EndRoll(Loot* loot, Map* allowedMap);

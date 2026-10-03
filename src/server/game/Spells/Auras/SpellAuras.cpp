@@ -852,6 +852,10 @@ void Aura::Update(uint32 diff, Unit* caster)
                 {
                     m_timeCla += 1000 - diff;
 
+                    // forever_classes: cost modifiers also lower the per-second cost (Improved Health Funnel)
+                    if (Player* modOwner = caster->GetSpellModOwner())
+                        modOwner->ApplySpellMod(GetId(), SPELLMOD_COST, manaPerSecond);
+
                     Powers powertype = Powers(m_spellInfo->PowerType);
                     if (powertype == POWER_HEALTH)
                     {
@@ -2124,7 +2128,7 @@ uint8 Aura::GetProcEffectMask(AuraApplication* aurApp, ProcEventInfo& eventInfo,
         }
     }
 
-    if (roll_chance_f(CalcProcChance(*procEntry, eventInfo)))
+    if (Luck::RollProc(aurApp->GetTarget(), eventInfo, GetId(), CalcProcChance(*procEntry, eventInfo)))
         return procEffectMask;
 
     return 0;

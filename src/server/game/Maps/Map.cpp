@@ -150,6 +150,7 @@ static thread_local CombatPool t_combatPool;
 #include "MiscPackets.h"
 #include "MMapFactory.h"
 #include "MMapManager.h"   // @megaserver D: SetNavMeshQuerySlot
+#include "MapDefines.h"    // @custom: NAV_GROUND for IsNearWalkableNavmesh
 #include "MotionMaster.h"
 #include "ObjectAccessor.h"
 #include "ObjectGridLoader.h"
@@ -1034,6 +1035,16 @@ void Map::UpdateEntitiesParallel(uint32 t_diff,
             t_combatPool.run(total, fn);
             s_combatParGroups.fetch_add(1, std::memory_order_relaxed);
         }
+
+        // removals the workers deferred (map thread, workers idle). Before the merge
+        // below, so the objects this takes out of the world are skipped by it.
+        for (std::size_t i = 0; i < _parallelRemovals.size(); ++i)
+        {
+            WorldObject* obj = _parallelRemovals[i];
+            obj->CleanupsBeforeDelete(false);
+            i_objectsToRemove.insert(obj);
+        }
+        _parallelRemovals.clear();
 
         // merge per-worker update-object buffers into the real set (map thread, no lock)
         // NOTE: an object queued into a worker buffer this pass may have been removed from
@@ -3020,6 +3031,27 @@ inline GridMap* Map::GetGrid(float x, float y)
     return GridMaps[gx][gy];
 }
 
+// @custom-begin
+bool Map::IsNearWalkableNavmesh(float x, float y, float z) const
+{
+    dtNavMeshQuery const* query = MMAP::MMapFactory::createOrGetMMapManager()->GetNavMeshQuery(GetId(), GetInstanceId());
+    if (!query)
+        return false;
+
+    dtQueryFilter filter;
+    filter.setIncludeFlags(NAV_GROUND | NAV_GROUND_STEEP);
+    filter.setExcludeFlags(0);
+
+    // Recast axes are (y, z, x). The box matches PathGenerator's first search,
+    // so "walkable" here means what it means when a bot paths to the point.
+    float const point[3] = { y, z, x };
+    float const extents[3] = { 3.0f, 5.0f, 3.0f };
+    float closest[3] = { 0.0f, 0.0f, 0.0f };
+    dtPolyRef poly = 0;
+    return dtStatusSucceed(query->findNearestPoly(point, extents, &filter, &poly, closest)) && poly != 0;
+}
+// @custom-end
+
 float Map::GetWaterOrGroundLevel(uint32 phasemask, float x, float y, float z, float* ground /*= nullptr*/, bool /*swim = false*/, float collisionHeight /*= DEFAULT_COLLISION_HEIGHT*/) const
 {
     if (const_cast<Map*>(this)->GetGrid(x, y))
@@ -3719,6 +3751,7 @@ bool Map::CheckRespawn(RespawnInfo* info)
 
 void Map::Respawn(RespawnInfo* info, CharacterDatabaseTransaction dbTrans)
 {
+    auto const lock = LockRespawnsIfParallel();
     if (info->respawnTime <= GameTime::GetGameTime())
         return;
     info->respawnTime = GameTime::GetGameTime();
@@ -4233,10 +4266,17 @@ void Map::AddObjectToRemoveList(WorldObject* obj)
 {
     ASSERT(obj->GetMapId() == GetId() && obj->GetInstanceId() == GetInstanceId());
 
-    obj->CleanupsBeforeDelete(false);                            // remove or simplify at least cross referenced links
+    // @megaserver D: a parallel worker must not run the cleanup itself (see
+    // _parallelRemovals); the map thread does it at the colour barrier.
+    if (t_inParallelCombat)
+    {
+        std::lock_guard<std::mutex> lk(_parallelGuard);
+        _parallelRemovals.push_back(obj);
+        return;
+    }
 
-    if (t_inParallelCombat) { std::lock_guard<std::mutex> lk(_parallelGuard); i_objectsToRemove.insert(obj); }
-    else i_objectsToRemove.insert(obj);
+    obj->CleanupsBeforeDelete(false);                            // remove or simplify at least cross referenced links
+    i_objectsToRemove.insert(obj);
 }
 
 void Map::AddObjectToSwitchList(WorldObject* obj, bool on)
@@ -5129,6 +5169,7 @@ void Map::UpdateIteratorBack(Player* player)
 
 void Map::SaveRespawnTime(SpawnObjectType type, ObjectGuid::LowType spawnId, uint32 entry, time_t respawnTime, uint32 gridId, CharacterDatabaseTransaction dbTrans, bool startup)
 {
+    auto const lock = LockRespawnsIfParallel();
     SpawnMetadata const* data = sObjectMgr->GetSpawnMetadata(type, spawnId);
     if (!data)
     {

@@ -17,6 +17,8 @@
 
 // @tswow-begin
 #include "InstanceScript.h"
+#include "TSCreature.h"
+#include "TSBossAI.h"
 // @tswow-end
 #include "CreatureAI.h"
 #include "AreaBoundary.h"
@@ -302,7 +304,7 @@ void CreatureAI::EngagementOver()
     me->AtDisengage();
 }
 
-bool CreatureAI::_EnterEvadeMode(EvadeReason /*why*/)
+bool CreatureAI::_EnterEvadeMode(EvadeReason why)
 {
     if (me->IsInEvadeMode())
         return false;
@@ -326,6 +328,11 @@ bool CreatureAI::_EnterEvadeMode(EvadeReason /*why*/)
     me->GetSpellHistory()->ResetAllCooldowns();
     EngagementOver();
 
+    // @tswow-begin
+    me->m_tsWorldEntity.m_timers.remove_on_evade();
+    sTSBossAI->OnEvade(me);
+    FIRE_ID(me->GetCreatureTemplate()->events.id,Creature,OnEvade,TSCreature(me),uint32(why));
+    // @tswow-end
     return true;
 }
 

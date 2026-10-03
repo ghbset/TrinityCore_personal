@@ -18,6 +18,10 @@
 #include "Random.h"
 #include "Errors.h"
 #include "SFMTRand.h"
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <random>
 
@@ -88,6 +92,73 @@ uint32 urandweighted(size_t count, double const* chances)
 {
     std::discrete_distribution<uint32> dd(chances, chances + count);
     return dd(engine);
+}
+
+// PRD constant C for a nominal chance p: the n-th roll since the last hit succeeds with C*n.
+// Solved by bisection on the long-run rate 1/E[rolls per hit], tabled at 0.1% steps.
+static double PrdRateFor(double c)
+{
+    double noHitYet = 1.0, expectedRolls = 0.0;
+    for (uint32 n = 1; noHitYet > 0.0; ++n)
+    {
+        double p = std::min(c * n, 1.0);
+        expectedRolls += n * noHitYet * p;
+        noHitYet *= 1.0 - p;
+    }
+    return 1.0 / expectedRolls;
+}
+
+static std::array<double, 1001> const PrdTable = []
+{
+    std::array<double, 1001> table{};
+    for (size_t i = 1; i < table.size(); ++i)
+    {
+        double p = i / 1000.0, lo = 0.0, hi = p;
+        for (int iter = 0; iter < 40; ++iter)
+        {
+            double mid = (lo + hi) / 2;
+            (PrdRateFor(mid) < p ? lo : hi) = mid;
+        }
+        table[i] = hi;
+    }
+    return table;
+}();
+
+bool roll_prd(float chance, uint16& misses)
+{
+    if (chance <= 0.0f)
+        return false;
+    if (chance >= 100.0f)
+    {
+        misses = 0;
+        return true;
+    }
+
+    size_t index = std::max<size_t>(1, size_t(std::lround(chance * 10.0f)));
+    if (misses < std::numeric_limits<uint16>::max())
+        ++misses;
+
+    if (rand_norm() < PrdTable[index] * misses)
+    {
+        misses = 0;
+        return true;
+    }
+    return false;
+}
+
+bool roll_bag(uint8 size, uint8 wins, uint8& left, uint8& winsLeft)
+{
+    if (!left || left > size || winsLeft > left)
+    {
+        left = size;
+        winsLeft = wins;
+    }
+
+    bool hit = urand(1, left) <= winsLeft;
+    --left;
+    if (hit)
+        --winsLeft;
+    return hit;
 }
 
 RandomEngine& RandomEngine::Instance()

@@ -3341,21 +3341,19 @@ class spell_item_refocus : public SpellScript
 {
     PrepareSpellScript(spell_item_refocus);
 
-    void HandleDummy(SpellEffIndex /*effIndex*/)
+    // forever_classes: finishes the cooldown of every Hunter spell in effect 0's class mask (items/hunter_items.ts)
+    void HandleDummy(SpellEffIndex effIndex)
     {
         Player* caster = GetCaster()->ToPlayer();
-
         if (!caster || caster->GetClass() != CLASS_HUNTER)
             return;
 
-        if (caster->GetSpellHistory()->HasCooldown(SPELL_AIMED_SHOT))
-            caster->GetSpellHistory()->ResetCooldown(SPELL_AIMED_SHOT, true);
-
-        if (caster->GetSpellHistory()->HasCooldown(SPELL_MULTISHOT))
-            caster->GetSpellHistory()->ResetCooldown(SPELL_MULTISHOT, true);
-
-        if (caster->GetSpellHistory()->HasCooldown(SPELL_VOLLEY))
-            caster->GetSpellHistory()->ResetCooldown(SPELL_VOLLEY, true);
+        flag96 const mask = GetSpellInfo()->GetEffect(effIndex).SpellClassMask;
+        caster->GetSpellHistory()->ResetCooldowns([mask](SpellHistory::CooldownStorageType::iterator itr) -> bool
+        {
+            SpellInfo const* info = sSpellMgr->GetSpellInfo(itr->first);
+            return info && info->IsAffected(SPELLFAMILY_HUNTER, mask);
+        }, true);
     }
 
     void Register() override

@@ -439,6 +439,12 @@ class TC_GAME_API Map : public GridRefManager<NGridType>
 
         float GetWaterLevel(float x, float y) const;
         bool IsInWater(uint32 phaseMask, float x, float y, float z, LiquidData* data = nullptr) const;
+        // @custom-begin: true if (x, y, z) is within a few yards of walkable
+        // navmesh - the same first search PathGenerator does for an endpoint.
+        // Exported for the WorldBots route editor's validation: Detour's own
+        // symbols are hidden inside the core, so a module cannot ask this itself.
+        bool IsNearWalkableNavmesh(float x, float y, float z) const;
+        // @custom-end
         bool IsUnderWater(uint32 phaseMask, float x, float y, float z) const;
 
         void MoveAllCreaturesInMoveList();
@@ -652,6 +658,7 @@ class TC_GAME_API Map : public GridRefManager<NGridType>
         time_t GetLinkedRespawnTime(ObjectGuid guid) const;
         time_t GetRespawnTime(SpawnObjectType type, ObjectGuid::LowType spawnId) const
         {
+            auto const lock = LockRespawnsIfParallel();
             auto const& map = GetRespawnMapForType(type);
             auto it = map.find(spawnId);
             return (it == map.end()) ? 0 : it->second->respawnTime;
@@ -855,6 +862,23 @@ class TC_GAME_API Map : public GridRefManager<NGridType>
         // combat pass (held only when t_inParallelCombat — uncontended otherwise)
         std::mutex _parallelGuard;
 
+        // @megaserver D: objects a parallel worker asked to remove. Their cleanup
+        // (RemoveFromWorld) erases from map-wide stores - the spawn-id stores, the
+        // objects store - that other workers use concurrently, which crashed the realm
+        // in MultimapErasePair. The map thread runs it at the colour barrier instead.
+        std::vector<WorldObject*> _parallelRemovals;
+
+        // @megaserver D: the respawn stores are map-wide too. Workers reach them through
+        // SaveRespawnTime (a despawn) and GetRespawnTime (a corpse waiting to respawn);
+        // two at once desynced them ("Respawn stores inconsistent"). Recursive, since
+        // saving a respawn time deletes the one it replaces through the same API.
+        mutable std::recursive_mutex _respawnGuard;
+        std::unique_lock<std::recursive_mutex> LockRespawnsIfParallel() const
+        {
+            return t_inParallelCombat ? std::unique_lock<std::recursive_mutex>(_respawnGuard)
+                                      : std::unique_lock<std::recursive_mutex>();
+        }
+
     public:
         void ProcessRespawns();
         void ApplyDynamicModeRespawnScaling(WorldObject const* obj, ObjectGuid::LowType spawnId, uint32& respawnDelay, uint32 mode) const;
@@ -876,11 +900,13 @@ class TC_GAME_API Map : public GridRefManager<NGridType>
         void GetRespawnInfo(std::vector<RespawnInfo const*>& respawnData, SpawnObjectTypeMask types) const;
         void Respawn(SpawnObjectType type, ObjectGuid::LowType spawnId, CharacterDatabaseTransaction dbTrans = nullptr)
         {
+            auto const lock = LockRespawnsIfParallel();
             if (RespawnInfo* info = GetRespawnInfo(type, spawnId))
                 Respawn(info, dbTrans);
         }
         void RemoveRespawnTime(SpawnObjectType type, ObjectGuid::LowType spawnId, CharacterDatabaseTransaction dbTrans = nullptr, bool alwaysDeleteFromDB = false)
         {
+            auto const lock = LockRespawnsIfParallel();
             if (RespawnInfo* info = GetRespawnInfo(type, spawnId))
                 DeleteRespawnInfo(info, dbTrans);
             // Some callers might need to make sure the database doesn't contain any respawn time

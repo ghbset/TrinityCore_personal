@@ -1446,11 +1446,24 @@ bool SpellInfo::IsAuraExclusiveBySpecificPerCasterWith(SpellInfo const* spellInf
         case SPELL_SPECIFIC_HAND:
         case SPELL_SPECIFIC_AURA:
         case SPELL_SPECIFIC_STING:
-        case SPELL_SPECIFIC_CURSE:
         case SPELL_SPECIFIC_ASPECT:
         case SPELL_SPECIFIC_JUDGEMENT:
         case SPELL_SPECIFIC_WARLOCK_CORRUPTION:
             return spellSpec == spellInfo->GetSpellSpecific();
+        case SPELL_SPECIFIC_CURSE:
+        {
+            // forever_classes: Banes and Curses are separate (one of each per warlock per target). Banes sit in an
+            // "exclusive from same caster" spell_group; curses do not. Groups load after spell specifics, so this is here.
+            auto inCasterGroup = [](SpellInfo const* info)
+            {
+                auto bounds = sSpellMgr->GetSpellSpellGroupMapBounds(info->GetFirstRankSpell()->Id);
+                for (auto itr = bounds.first; itr != bounds.second; ++itr)
+                    if (sSpellMgr->GetSpellGroupStackRule(itr->second) == SPELL_GROUP_STACK_RULE_EXCLUSIVE_FROM_SAME_CASTER)
+                        return true;
+                return false;
+            };
+            return spellSpec == spellInfo->GetSpellSpecific() && inCasterGroup(this) == inCasterGroup(spellInfo);
+        }
         default:
             return false;
     }
@@ -2126,8 +2139,9 @@ void SpellInfo::_LoadSpellSpecific()
             }
             case SPELLFAMILY_MAGE:
             {
-                // family flags 18(Molten), 25(Frost/Ice), 28(Mage)
-                if (SpellFamilyFlags[0] & 0x12040000)
+                // family flags 25(Frost/Ice), 28(Mage). forever_classes: Molten Armor's bit 18 (0x40000) is Forever's shared
+                // Arcane-spell bit (Polymorph, Arcane Explosion/Missiles, Counterspell); Molten Armor is not in Forever.
+                if (SpellFamilyFlags[0] & 0x12000000)
                     return SPELL_SPECIFIC_MAGE_ARMOR;
 
                 // Arcane brillance and Arcane intelect (normal check fails because of flags difference)
@@ -2163,8 +2177,9 @@ void SpellInfo::_LoadSpellSpecific()
             }
             case SPELLFAMILY_PRIEST:
             {
-                // Divine Spirit and Prayer of Spirit
-                if (SpellFamilyFlags[0] & 0x20)
+                // Divine Spirit and Prayer of Spirit (forever_classes: only the stat buffs; Forever's Contingency Plan
+                // ward shares bit 0x20)
+                if (SpellFamilyFlags[0] & 0x20 && HasAura(SPELL_AURA_MOD_STAT))
                     return SPELL_SPECIFIC_PRIEST_DIVINE_SPIRIT;
 
                 break;
@@ -2192,7 +2207,8 @@ void SpellInfo::_LoadSpellSpecific()
                     return SPELL_SPECIFIC_HAND;
 
                 // Judgement of Wisdom, Judgement of Light, Judgement of Justice
-                if (Id == 20184 || Id == 20185 || Id == 20186)
+                // forever_classes: also the Forever judgement debuffs (single-target, word-0 0x20180000), so one paladin keeps one
+                if (Id == 20184 || Id == 20185 || Id == 20186 || ((SpellFamilyFlags[0] & 0x20180000) && HasAttribute(SPELL_ATTR5_SINGLE_TARGET_SPELL)))
                     return SPELL_SPECIFIC_JUDGEMENT;
 
                 // only paladin auras have this (for palaldin class family)
@@ -2301,8 +2317,8 @@ void SpellInfo::_LoadSpellDiminishInfo()
                 // Frost Nova / Freeze (Water Elemental)
                 else if (SpellIconID == 193)
                     return DIMINISHING_CONTROLLED_ROOT;
-                // Dragon's Breath
-                else if (SpellFamilyFlags[0] & 0x800000)
+                // Dragon's Breath (forever_classes: + its icon; Forever's Blast Wave carries bit 0x800000 too)
+                else if ((SpellFamilyFlags[0] & 0x800000) && SpellIconID == 1548)
                     return DIMINISHING_DRAGONS_BREATH;
                 break;
             }
@@ -2318,8 +2334,8 @@ void SpellInfo::_LoadSpellDiminishInfo()
             }
             case SPELLFAMILY_WARLOCK:
             {
-                // Curses/etc
-                if ((SpellFamilyFlags[0] & 0x80000000) || (SpellFamilyFlags[1] & 0x200))
+                // Curses/etc (forever_classes: Forever's Fear / Howl of Terror also carry A 0x80000000; they keep the fear DR)
+                if (((SpellFamilyFlags[0] & 0x80000000) || (SpellFamilyFlags[1] & 0x200)) && !(GetAllEffectsMechanicMask() & (1 << MECHANIC_FEAR)))
                     return DIMINISHING_LIMITONLY;
                 // Seduction
                 else if (SpellFamilyFlags[1] & 0x10000000)
@@ -3599,6 +3615,7 @@ bool _isPositiveEffectImpl(SpellInfo const* spellInfo, SpellEffectInfo const& ef
                 case SPELL_AURA_SCHOOL_HEAL_ABSORB:
                 case SPELL_AURA_EMPATHY:
                 case SPELL_AURA_MOD_DAMAGE_FROM_CASTER:
+                case SPELL_AURA_MOD_SPELL_DAMAGE_FROM_CASTER:
                 case SPELL_AURA_PREVENTS_FLEEING:
                     return false;
                 default:

@@ -904,14 +904,18 @@ class spell_hun_piercing_shots : public AuraScript
 
         if (DamageInfo* dmgInfo = eventInfo.GetDamageInfo())
         {
-            SpellInfo const* piercingShots = sSpellMgr->AssertSpellInfo(SPELL_HUNTER_PIERCING_SHOTS);
+            // forever_classes: a talent whose effect names its own bleed (Lacerating Strikes' clone) casts that one
+            uint32 bleedId = aurEff->GetSpellEffectInfo().TriggerSpell;
+            SpellInfo const* piercingShots = sSpellMgr->GetSpellInfo(bleedId);
+            if (!piercingShots)
+                piercingShots = sSpellMgr->AssertSpellInfo(bleedId = SPELL_HUNTER_PIERCING_SHOTS);
             uint32 dmg = dmgInfo->GetDamage();
 
-            int32 bp = CalculatePct(int32(dmg), aurEff->GetAmount()) / static_cast<int32>(piercingShots->GetMaxTicks());
+            int32 bp = CalculatePct(int32(dmg), aurEff->GetAmount()) / static_cast<int32>(std::max<uint32>(piercingShots->GetMaxTicks(), 1));
 
             CastSpellExtraArgs args(aurEff);
             args.AddSpellBP0(bp);
-            caster->CastSpell(target, SPELL_HUNTER_PIERCING_SHOTS, args);
+            caster->CastSpell(target, bleedId, args);
         }
     }
 

@@ -141,6 +141,7 @@ void Loot::clear()
     PlayersLooting.clear();
     items.clear();
     quest_items.clear();
+    questBagWinners.clear();
     gold = 0;
     unlootedCount = 0;
     roundRobinPlayer.Clear();
@@ -216,7 +217,10 @@ bool Loot::FillLoot(uint32 lootId, LootStore const& store, Player* lootOwner, bo
     items.reserve(MAX_NR_LOOT_ITEMS);
     quest_items.reserve(MAX_NR_QUEST_ITEMS);
 
-    tab->Process(*this, store.IsRatesAllowed(), lootMode);          // Processing is done there, callback via Loot::AddItem()
+    {
+        Luck::LootScope luck(*this, lootOwner, personal);
+        tab->Process(*this, store.IsRatesAllowed(), lootMode);      // Processing is done there, callback via Loot::AddItem()
+    }
 
                                                                     // Setting access rights for group loot case
     Group* group = lootOwner->GetGroup();
@@ -314,6 +318,10 @@ NotNormalLootItemList* Loot::FillQuestLoot(Player* player)
     for (uint8 i = 0; i < quest_items.size(); ++i)
     {
         LootItem &item = quest_items[i];
+
+        auto bagWinners = questBagWinners.find(item.itemid);
+        if (bagWinners != questBagWinners.end() && !bagWinners->second.count(player->GetGUID()))
+            continue;
 
         if (!item.is_looted && (item.AllowedForPlayer(player, lootOwnerGUID) || (item.follow_loot_rules && player->GetGroup() && ((player->GetGroup()->GetLootMethod() == MASTER_LOOT && player->GetGroup()->GetMasterLooterGuid() == player->GetGUID()) || player->GetGroup()->GetLootMethod() != MASTER_LOOT))))
         {

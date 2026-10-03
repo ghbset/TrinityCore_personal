@@ -2243,7 +2243,8 @@ void Player::RegenerateHealth()
     }
 
     // always regeneration bonus (including combat)
-    addValue += GetTotalAuraModifier(SPELL_AURA_MOD_HEALTH_REGEN_IN_COMBAT);
+    // forever_classes: "X health per 5 sec" regenerated per 2 s tick (as MOD_REGEN above); it was added whole every tick
+    addValue += GetTotalAuraModifier(SPELL_AURA_MOD_HEALTH_REGEN_IN_COMBAT) * 0.4f;
     addValue += m_baseHealthRegen / 2.5f;
 
     if (addValue < 0.0f)
@@ -4636,6 +4637,15 @@ void Player::ResurrectPlayer(float restore_percent, bool applySickness, uint32 s
     // This must be called always even on Players with race != RACE_NIGHTELF in case of faction change
     RemoveAurasDueToSpell(20584);                           // RACE_NIGHTELF speed bonuses
     RemoveAurasDueToSpell(8326);                            // SPELL_AURA_GHOST
+
+    // @custom-begin: a player revived while queued at a battleground spirit
+    // guide (by a priest's resurrection, say) leaves the queue. Otherwise the
+    // Waiting to Resurrect aura outlives this life, the ghost auto-queue skips
+    // the player on the next death, and a managed bot never releases at all.
+    RemoveAurasDueToSpell(SPELL_WAITING_FOR_RESURRECT);
+    if (Battleground* bg = GetBattleground())
+        bg->RemovePlayerFromResurrectQueue(GetGUID());
+    // @custom-end
 
     if (GetSession()->IsARecruiter() || (GetSession()->GetRecruiterId() != 0))
         SetDynamicFlag(UNIT_DYNFLAG_REFER_A_FRIEND);
@@ -8323,6 +8333,25 @@ void Player::CastItemCombatSpell(DamageInfo const& damageInfo, Item* item, ItemT
 
                 // @duskhaven-port
                 FIRE(Player, OnEnchantTriggered, TSPlayer(this), TSUnit(target), TSItem(item), TSSpellInfo(spellInfo));
+
+                // forever_classes: a charged temporary enchant (poisons) uses one charge per proc
+                // (a DUMMY aura on the poison spell's mask, Improved Poisons, is a % chance to keep the charge)
+                bool keepCharge = false;
+                for (AuraEffect const* keep : GetAuraEffectsByType(SPELL_AURA_DUMMY))
+                    if (keep->IsAffectingSpell(spellInfo) && roll_chance_i(keep->GetAmount()))
+                        keepCharge = true;
+                if (e_slot == TEMP_ENCHANTMENT_SLOT && !keepCharge)
+                    if (uint32 charges = item->GetEnchantmentCharges(TEMP_ENCHANTMENT_SLOT))
+                    {
+                        if (charges > 1)
+                            item->SetEnchantmentCharges(TEMP_ENCHANTMENT_SLOT, charges - 1);
+                        else
+                        {
+                            ApplyEnchantment(item, TEMP_ENCHANTMENT_SLOT, false);
+                            item->ClearEnchantment(TEMP_ENCHANTMENT_SLOT);
+                            return;             // the enchant (and this loop's pEnchant) is gone
+                        }
+                    }
             }
         }
     }
@@ -9780,21 +9809,10 @@ void Player::ResetPetTalents()
 void Player::SetVirtualItemSlot(uint8 i, Item* item)
 {
     ASSERT(i < 3);
-    if (i < 2 && item)
-    {
-        if (!item->GetEnchantmentId(TEMP_ENCHANTMENT_SLOT))
-            return;
-        uint32 charges = item->GetEnchantmentCharges(TEMP_ENCHANTMENT_SLOT);
-        if (charges == 0)
-            return;
-        if (charges > 1)
-            item->SetEnchantmentCharges(TEMP_ENCHANTMENT_SLOT, charges-1);
-        else
-        {
-            ApplyEnchantment(item, TEMP_ENCHANTMENT_SLOT, false);
-            item->ClearEnchantment(TEMP_ENCHANTMENT_SLOT);
-        }
-    }
+    // forever_classes: drawing a weapon no longer uses a temporary-enchant charge (poison charges are used per proc,
+    // Player::CastItemCombatSpell); no stock 3.3.5a temporary enchant has charges
+    (void)i;
+    (void)item;
 }
 
 void Player::SetSheath(SheathState sheathed)
@@ -9966,7 +9984,8 @@ uint8 Player::FindEquipSlot(ItemTemplate const* proto, uint32 slot, bool swap) c
                         slots[0] = EQUIPMENT_SLOT_RANGED;
                     break;
                 case ITEM_SUBCLASS_ARMOR_SIGIL:
-                    if (playerClass == CLASS_DEATH_KNIGHT)
+                    // deathknights module: its custom class learns the Sigil proficiency (52665) too
+                    if (playerClass == CLASS_DEATH_KNIGHT || HasSpell(52665))
                         slots[0] = EQUIPMENT_SLOT_RANGED;
                     break;
             }
@@ -12334,6 +12353,7 @@ Item* Player::StoreNewItem(ItemPosCountVec const& dest, uint32 item, bool update
 
         pItem = StoreItem(dest, pItem, update);
 
+        Luck::OnItemReceived(this, item);
         ItemAddedQuestCheck(item, count);
         UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_RECEIVE_EPIC_ITEM, item, count);
         UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_OWN_ITEM, item, count);
@@ -18286,6 +18306,7 @@ bool Player::LoadFromDB(ObjectGuid guid, CharacterDatabaseQueryHolder const& hol
 
     // load skills after InitStatsForLevel because it triggering aura apply also
     _LoadSkills(holder.GetPreparedResult(PLAYER_LOGIN_QUERY_LOAD_SKILLS));
+    Luck::LoadLegendaryMisses(this);
     UpdateSkillsForLevel(); //update skills after load, to make sure they are correctly update at player load
 
     // apply original stats mods before spell loading or item equipment that call before equip _RemoveStatsMods()
@@ -24523,6 +24544,13 @@ uint32 Player::GetResurrectionSpellId()
         // Soulstone Resurrection                           // prio: 3 (max, non death persistent)
         if (prio < 2 && (*itr)->GetSpellInfo()->SpellVisual[0] == 99 && (*itr)->GetSpellInfo()->SpellIconID == 92)
         {
+            // forever_classes Soulstone clones: e0 names the resurrection spell
+            if (uint32 res = (*itr)->GetSpellInfo()->GetEffect(EFFECT_0).TriggerSpell)
+            {
+                spell_id = res;
+                prio = 3;
+                continue;
+            }
             switch ((*itr)->GetId())
             {
                 case 20707: spell_id =  3026; break;        // rank 1

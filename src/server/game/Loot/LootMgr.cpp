@@ -290,7 +290,11 @@ bool LootStoreItem::Roll(bool rate) const
 
     float qualityModifier = pProto && rate ? sWorld->getRate(qualityToRate[pProto->Quality]) : 1.0f;
 
-    return roll_chance_f(chance*qualityModifier);
+    bool drop;
+    if (needs_quest && Luck::RollQuestItem(*this, chance * qualityModifier, drop))
+        return drop;
+
+    return roll_chance_f(Luck::LegendaryChance(*this, chance) * qualityModifier);
 }
 
 // Checks correctness of values
@@ -381,13 +385,19 @@ LootStoreItem const* LootTemplate::LootGroup::Roll(Loot& loot, uint16 lootMode) 
     {
         float roll = (float)rand_chance();
 
-        for (LootStoreItemList::const_iterator itr = possibleLoot.begin(); itr != possibleLoot.end(); ++itr)   // check each explicitly chanced entry in the template and modify its chance based on quality.
+        // resolve every chance up front so each legendary in the group counts as rolled, even past the pick
+        std::vector<float> chances;
+        for (LootStoreItem const* item : possibleLoot)
+            chances.push_back(Luck::LegendaryChance(*item, item->chance));
+
+        auto chance = chances.begin();
+        for (LootStoreItemList::const_iterator itr = possibleLoot.begin(); itr != possibleLoot.end(); ++itr, ++chance)   // check each explicitly chanced entry in the template and modify its chance based on quality.
         {
             LootStoreItem* item = *itr;
-            if (item->chance >= 100.0f)
+            if (*chance >= 100.0f)
                 return item;
 
-            roll -= item->chance;
+            roll -= *chance;
             if (roll < 0)
                 return item;
         }

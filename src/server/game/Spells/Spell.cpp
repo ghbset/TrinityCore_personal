@@ -2083,7 +2083,9 @@ void Spell::prepareDataForTriggerSystem()
     }
 
     // Hellfire Effect - trigger as DOT
-    if (m_spellInfo->SpellFamilyName == SPELLFAMILY_WARLOCK && m_spellInfo->SpellFamilyFlags[0] & 0x00000040)
+    // (forever_classes: Forever's Soul Fire shares 0x40; its B 0x80 excludes it)
+    if (m_spellInfo->SpellFamilyName == SPELLFAMILY_WARLOCK && m_spellInfo->SpellFamilyFlags[0] & 0x00000040
+        && !(m_spellInfo->SpellFamilyFlags[1] & 0x80))
     {
         m_procAttacker = PROC_FLAG_DONE_PERIODIC;
         m_procVictim   = PROC_FLAG_TAKEN_PERIODIC;
@@ -4935,8 +4937,9 @@ void Spell::TakePower()
         FIRE(Player, OnPowerSpent, TSPlayer(playerCaster),
              TSNumber<uint8>(powerType), TSNumber<int32>(m_powerCost));
 
-    // Set the five second timer
-    if (powerType == POWER_MANA && m_powerCost > 0)
+    // Set the five second timer (forever_classes: not for drain-all-power spells, Lay on Hands: "does not interrupt
+    // Mana regeneration"; stock 3.3.5a uses the attribute on Lay on Hands only)
+    if (powerType == POWER_MANA && m_powerCost > 0 && !m_spellInfo->HasAttribute(SPELL_ATTR1_DRAIN_ALL_POWER))
         unitCaster->SetLastManaUse(GameTime::GetGameTimeMS());
 }
 
@@ -5470,7 +5473,9 @@ SpellCastResult Spell::CheckCast(bool strict, uint32* param1 /*= nullptr*/, uint
         if (target != m_caster)
         {
             // Must be behind the target
-            if (m_spellInfo->HasAttribute(SPELL_ATTR0_CU_REQ_CASTER_BEHIND_TARGET) && target->HasInArc(static_cast<float>(M_PI), m_caster))
+            // (forever_classes: a DUMMY aura carrying the spell's class mask lifts it: Dirty Deeds on Garrote)
+            if (m_spellInfo->HasAttribute(SPELL_ATTR0_CU_REQ_CASTER_BEHIND_TARGET) && target->HasInArc(static_cast<float>(M_PI), m_caster)
+                && !(m_caster->ToUnit() && m_caster->ToUnit()->HasAuraTypeWithAffectMask(SPELL_AURA_DUMMY, m_spellInfo)))
                 return SPELL_FAILED_NOT_BEHIND;
 
             // Target must be facing you
@@ -7861,7 +7866,8 @@ void Spell::PreprocessSpellLaunch(TargetInfo& targetInfo)
         , TSMutableNumber<float>(&critChance)
     );
     // @tswow-end
-    targetInfo.IsCrit = roll_chance_f(critChance);
+    LuckSlot critSlot = m_spellInfo->DmgClass == SPELL_DAMAGE_CLASS_MELEE || m_spellInfo->DmgClass == SPELL_DAMAGE_CLASS_RANGED ? LUCK_CRIT : LUCK_SPELL_CRIT;
+    targetInfo.IsCrit = Luck::Roll(Luck::Counters(m_originalCaster, unit), critSlot, critChance);
 }
 
 void Spell::DoEffectOnLaunchTarget(TargetInfo& targetInfo, float multiplier, SpellEffectInfo const& spellEffectInfo)

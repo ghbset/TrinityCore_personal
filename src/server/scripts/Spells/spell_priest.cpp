@@ -888,7 +888,10 @@ class spell_pri_power_word_shield_aura : public AuraScript
         if (Unit* caster = GetCaster())
         {
             // +80.68% from sp bonus
-            float bonus = 0.8068f;
+            // forever_classes: the shield's own e0 coefficient when it has one (stock 17's is 0 -> WotLK's 80.68%)
+            float bonus = aurEff->GetSpellEffectInfo().BonusMultiplier;
+            if (!bonus)
+                bonus = 0.8068f;
 
             // Borrowed Time
             if (AuraEffect const* borrowedTime = caster->GetDummyAuraEffect(SPELLFAMILY_PRIEST, PRIEST_ICON_ID_BORROWED_TIME, EFFECT_1))

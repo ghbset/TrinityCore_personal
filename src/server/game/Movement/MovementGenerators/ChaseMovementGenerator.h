@@ -41,7 +41,15 @@ class ChaseMovementGenerator : public MovementGenerator, public AbstractFollower
         void Finalize(Unit*, bool, bool) override;
         MovementGeneratorType GetMovementGeneratorType() const override { return CHASE_MOTION_TYPE; }
 
-        void UnitSpeedChanged() override { _lastTargetPosition.reset(); }
+        // A speed change must force the chase spline to be relaunched: a spline's
+        // velocity is baked in when it is created, so a creature slowed mid-chase
+        // keeps travelling at the slowed velocity even after the aura falls off.
+        //
+        // Upstream signals this by clearing _lastTargetPosition and letting Update()
+        // notice. That no longer works here: Update() reassigns _lastTargetPosition
+        // unconditionally every tick (for velocity tracking), which wipes the signal
+        // before it is read. _speedChanged is a dedicated flag Update() cannot clobber.
+        void UnitSpeedChanged() override { _lastTargetPosition.reset(); _speedChanged = true; }
 
     private:
         static constexpr uint32 RANGE_CHECK_INTERVAL = 100; // time (ms) until we attempt to recalculate
@@ -63,6 +71,7 @@ class ChaseMovementGenerator : public MovementGenerator, public AbstractFollower
         bool _movingTowards = true;
         bool _mutualChase = true;
         uint32 _smoothMovementCount = 0; // tracks consecutive smooth updates
+        bool _speedChanged = false; // set by UnitSpeedChanged(), cleared when the path is relaunched
         bool _predictiveActive = false; // sticky predictive-pursuit state, gated by hysteresis band above
 
         // Predictive pursuit. 0.5s look-ahead = up to ~3.5y lead at run speed,

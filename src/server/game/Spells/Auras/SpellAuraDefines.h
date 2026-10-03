@@ -394,7 +394,12 @@ enum AuraType : uint32
     SPELL_AURA_PREVENT_RESURRECTION                         = 314,
     SPELL_AURA_UNDERWATER_WALKING                           = 315,
     SPELL_AURA_PERIODIC_HASTE                               = 316,
-    TOTAL_AURAS                                             = 317
+    // forever_talents: modern auras with no 3.3.5a equivalent (TC master 270 / 271 / 308 / 332)
+    SPELL_AURA_MOD_SCHOOL_MASK_DAMAGE_FROM_CASTER           = 317, // misc = school mask; +% damage taken from the caster's spells of those schools
+    SPELL_AURA_MOD_SPELL_DAMAGE_FROM_CASTER                 = 318, // spell class mask; +% damage taken from the caster's affected spells
+    SPELL_AURA_MOD_CRIT_CHANCE_FOR_CASTER_WITH_ABILITIES    = 319, // spell class mask; +crit chance for the caster's affected spells
+    SPELL_AURA_OVERRIDE_SPELL                               = 320, // misc = spell cast by the player, amount = spell cast instead
+    TOTAL_AURAS                                             = 321
 };
 
 enum AuraObjectType

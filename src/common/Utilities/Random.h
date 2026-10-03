@@ -61,6 +61,15 @@ inline bool roll_chance_i(int chance)
     return chance > irand(0, 99);
 }
 
+/* Smoothed roll (pseudo-random distribution): same long-run rate as roll_chance_f, but each miss
+   raises the next roll's chance and a hit resets it, so long droughts and clumps are rare.
+   'misses' is the caller-owned streak counter for this kind of roll (range 0-100). */
+TC_COMMON_API bool roll_prd(float chance, uint16& misses);
+
+/* Marble bag: 'wins' winning marbles in a bag of 'size', drawn without replacement and refilled
+   when empty. 'left'/'winsLeft' are the caller-owned bag state (start both at 0). */
+TC_COMMON_API bool roll_bag(uint8 size, uint8 wins, uint8& left, uint8& winsLeft);
+
 /*
 * Wrapper satisfying UniformRandomNumberGenerator concept for use in <random> algorithms
 */

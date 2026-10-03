@@ -968,14 +968,23 @@ class spell_rog_vanish : public AuraScript
         unitTarget->RemoveAurasByType(SPELL_AURA_MOD_STALKED);
 
         // See if we already are stealthed. If so, we're done.
-        if (unitTarget->HasAura(SPELL_ROGUE_STEALTH))
+        if (unitTarget->GetShapeshiftForm() == FORM_STEALTH)
             return;
 
-        // Reset cooldown on stealth if needed
-        if (unitTarget->GetSpellHistory()->HasCooldown(SPELL_ROGUE_STEALTH))
-            unitTarget->GetSpellHistory()->ResetCooldown(SPELL_ROGUE_STEALTH);
+        // forever_classes: the Vanish clones name their Stealth in e0's TriggerSpell (stock Vanish: 0 -> stock Stealth);
+        // cast the highest rank of that chain the rogue knows
+        uint32 stealthId = GetSpellInfo()->GetEffect(EFFECT_0).TriggerSpell;
+        if (!stealthId)
+            stealthId = SPELL_ROGUE_STEALTH;
+        else if (Player* player = unitTarget->ToPlayer())
+            for (SpellInfo const* rank = sSpellMgr->GetSpellInfo(stealthId); rank; rank = rank->GetNextRankSpell())
+                if (player->HasSpell(rank->Id))
+                    stealthId = rank->Id;
 
-        unitTarget->CastSpell(nullptr, SPELL_ROGUE_STEALTH, true);
+        // Reset cooldown on stealth if needed
+        unitTarget->GetSpellHistory()->ResetCooldown(stealthId);
+
+        unitTarget->CastSpell(nullptr, stealthId, true);
     }
 
     void Register() override

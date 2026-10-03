@@ -57,7 +57,13 @@ bool PathGenerator::CalculatePath(float destX, float destY, float destZ, bool fo
 {
     float x, y, z;
     _source->GetPosition(x, y, z);
+    return CalculatePathFrom(x, y, z, destX, destY, destZ, forceDest);
+}
 
+// @worldbots: lets a bot plan the leg after the one it is walking, from that
+// leg's end, so it can run through several waypoints without stopping.
+bool PathGenerator::CalculatePathFrom(float x, float y, float z, float destX, float destY, float destZ, bool forceDest)
+{
     if (!Trinity::IsValidMapCoord(destX, destY, destZ) || !Trinity::IsValidMapCoord(x, y, z))
         return false;
 

@@ -729,8 +729,8 @@ class spell_warl_life_tap : public SpellScript
         Unit* caster = GetCaster();
         int32 base = GetEffectInfo(effIndex).CalcValue();
 
-        float penalty = caster->CalculateSpellpowerCoefficientLevelPenalty(GetSpellInfo());
-        float fmana = (float)base + caster->GetUInt32Value(PLAYER_FIELD_MOD_DAMAGE_DONE_POS + AsUnderlyingType(SPELL_SCHOOL_SHADOW)) * 0.5f * penalty;
+        // forever_classes: Forever's Life Tap adds the caster's Spirit ($SPI*1), not half of Shadow spell power
+        float fmana = (float)base + caster->GetStat(STAT_SPIRIT);
 
         // Improved Life Tap mod
         if (AuraEffect const* aurEff = caster->GetDummyAuraEffect(SPELLFAMILY_WARLOCK, WARLOCK_ICON_ID_IMPROVED_LIFE_TAP, 0))

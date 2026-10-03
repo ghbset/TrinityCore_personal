@@ -84,6 +84,11 @@ namespace FactorySelector
         if (creature->IsPet())
             return ASSERT_NOTNULL(sCreatureAIRegistry->GetRegistryItem("PetAI"))->Create(creature);
 
+        // @tswow-begin TSScriptedAI overrides any core ScriptName
+        if (creature->GetAIName() == "TSScriptedAI")
+            return SelectFactory<CreatureAI>(creature)->Create(creature);
+        // @tswow-end
+
         // scriptname in db
         try
         {

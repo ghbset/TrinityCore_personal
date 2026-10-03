@@ -440,8 +440,9 @@ void Spell::EffectSchoolDMG()
                         int32 pct_dot = unitCaster->CalculateSpellDamage(m_spellInfo->GetEffect(EFFECT_2));
                         int32 const dotBasePoints = CalculatePct(pdamage, pct_dot);
 
-                        ASSERT(m_spellInfo->GetMaxTicks() > 0);
-                        m_spellValue->EffectBasePoints[EFFECT_1] = dotBasePoints / m_spellInfo->GetMaxTicks();
+                        // forever_talents: Forever's Conflagrate has no periodic effect (no ticks); never divide by zero
+                        if (uint32 ticks = m_spellInfo->GetMaxTicks())
+                            m_spellValue->EffectBasePoints[EFFECT_1] = dotBasePoints / ticks;
 
                         // Glyph of Conflagrate
                         if (!unitCaster->HasAura(56235))
@@ -501,10 +502,11 @@ void Spell::EffectSchoolDMG()
                 // Ferocious Bite
                 if (unitCaster->GetTypeId() == TYPEID_PLAYER && (m_spellInfo->SpellFamilyFlags[0] & 0x000800000) && m_spellInfo->SpellVisual[0] == 6587)
                 {
-                    // converts each extra point of energy into ($f1+$AP/410) additional damage
+                    // forever_classes: each extra point of energy (all of it) adds the rank's per-point damage ($f1),
+                    // no AP/410 part and no 30-energy cap (Forever / Classic)
                     float ap = unitCaster->GetTotalAttackPowerValue(BASE_ATTACK);
-                    float multiple = ap / 410 + effectInfo->DamageMultiplier;
-                    int32 energy = -(unitCaster->ModifyPower(POWER_ENERGY, -30));
+                    float multiple = effectInfo->DamageMultiplier;
+                    int32 energy = -(unitCaster->ModifyPower(POWER_ENERGY, -unitCaster->GetPower(POWER_ENERGY)));
                     damage += int32(energy * multiple);
                     damage += int32(CalculatePct(unitCaster->ToPlayer()->GetComboPoints() * ap, 7));
                 }
@@ -1418,13 +1420,8 @@ void Spell::EffectHeal()
         int32 tickheal = targetAura->GetAmount();
         unitTarget->SpellHealingBonusTaken(unitCaster, targetAura->GetSpellInfo(), tickheal, DOT);
 
-        int32 tickcount = 0;
-        // Rejuvenation
-        if (targetAura->GetSpellInfo()->SpellFamilyFlags[0] & 0x10)
-            tickcount = 4;
-        // Regrowth
-        else // if (targetAura->GetSpellInfo()->SpellFamilyFlags[0] & 0x40)
-            tickcount = 6;
+        // forever_classes: the HoT's own tick count (Forever's Regrowth: 21 s / 3 s = 7; WotLK hard-coded 4 / 6)
+        int32 tickcount = targetAura->GetTotalTicks();
 
         addhealth += tickheal * tickcount;
 
@@ -2920,6 +2917,9 @@ void Spell::EffectEnchantItemTmp()
     // rogue family enchantments exception by duration
     if (m_spellInfo->Id == 38615)
         duration = 1800;                                    // 30 mins
+    // forever_classes poisons: the use spell's value is the duration in seconds (Forever: 30 min)
+    else if (m_spellInfo->SpellFamilyName == SPELLFAMILY_ROGUE && effectInfo->CalcValue() > 0)
+        duration = uint32(effectInfo->CalcValue());
     // other rogue family enchantments always 1 hour (some have spell damage=0, but some have wrong data in EffBasePoints)
     else if (m_spellInfo->SpellFamilyName == SPELLFAMILY_ROGUE)
         duration = 3600;                                    // 1 hour
@@ -2959,7 +2959,14 @@ void Spell::EffectEnchantItemTmp()
     // remove old enchanting before applying new if equipped
     item_owner->ApplyEnchantment(itemTarget, TEMP_ENCHANTMENT_SLOT, false);
 
-    itemTarget->SetEnchantment(TEMP_ENCHANTMENT_SLOT, enchant_id, duration * 1000, 0, m_caster->GetGUID());
+    // forever_classes poisons: a DUMMY effect on the use spell holds the charges (0 / none: unlimited)
+    uint32 charges = 0;
+    if (m_spellInfo->SpellFamilyName == SPELLFAMILY_ROGUE)
+        for (SpellEffectInfo const& other : m_spellInfo->GetEffects())
+            if (other.IsEffect(SPELL_EFFECT_DUMMY))
+                charges = uint32(std::max(0, other.CalcValue()));
+
+    itemTarget->SetEnchantment(TEMP_ENCHANTMENT_SLOT, enchant_id, duration * 1000, charges, m_caster->GetGUID());
 
     // add new enchanting if equipped
     item_owner->ApplyEnchantment(itemTarget, TEMP_ENCHANTMENT_SLOT, true);
@@ -3248,11 +3255,18 @@ void Spell::EffectWeaponDmg()
                 if (m_spellInfo->SpellFamilyFlags[0] & 0x2000000)
                     AddComboPointGain(unitTarget, 1);
 
-                // 50% more damage with daggers
+                // 50% more damage with daggers (forever_classes: a WEAPON_PERCENT_DAMAGE effect's MiscValue, if set, is its
+                // weapon % with a dagger: Ghostly Strike 180, Hemorrhage 145)
                 if (unitCaster->GetTypeId() == TYPEID_PLAYER)
                     if (Item* item = unitCaster->ToPlayer()->GetWeaponForAttack(m_attackType, true))
                         if (item->GetTemplate()->SubClass == ITEM_SUBCLASS_WEAPON_DAGGER)
-                            totalDamagePercentMod *= 1.5f;
+                        {
+                            float daggerMod = 1.5f;
+                            for (SpellEffectInfo const& eff : m_spellInfo->GetEffects())
+                                if (eff.Effect == SPELL_EFFECT_WEAPON_PERCENT_DAMAGE && eff.MiscValue > 0)
+                                    daggerMod = float(eff.MiscValue) / float(eff.BasePoints + 1);
+                            totalDamagePercentMod *= daggerMod;
+                        }
             }
             // Mutilate (for each hand)
             else if (m_spellInfo->SpellFamilyFlags[1] & 0x6)

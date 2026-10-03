@@ -37,6 +37,7 @@
 // @tswow-begin (Using Rochet2/Transmog)
 #include "Transmogrification.h"
 // @tswow-end
+#include "Luck.h"
 #include <memory>
 #include <queue>
 #include <unordered_set>
@@ -1332,6 +1333,7 @@ class TC_GAME_API Player : public Unit, public GridObject<Player>
         void ReputationChanged(FactionEntry const* factionEntry);
         void ReputationChanged2(FactionEntry const* factionEntry);
         bool HasQuestForItem(uint32 itemId, uint32 excludeQuestId = 0, bool turnIn = false) const;
+        PlayerLuck& GetLuck() { return m_luck; }
         bool HasQuestForGO(int32 goId) const;
         void UpdateVisibleGameobjectsOrSpellClicks();
         bool CanShareQuest(uint32 questId) const;
@@ -2704,6 +2706,8 @@ class TC_GAME_API Player : public Unit, public GridObject<Player>
         bool m_needsZoneUpdate;
 
         TimeTracker m_groupUpdateTimer;
+
+        PlayerLuck m_luck;
 
     private:
         // internal common parts for CanStore/StoreItem functions

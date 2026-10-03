@@ -640,7 +640,9 @@ class spell_sha_flametongue_weapon : public AuraScript
         // calculate penalty from passive aura as is the one with level
         float const factorMod = player->CalculateSpellpowerCoefficientLevelPenalty(GetSpellInfo());
 
-        float const spCoeff = 0.03811f;
+        float spCoeff = 0.03811f;
+        if (SpellBonusEntry const* bonus = sSpellMgr->GetSpellBonusData(GetId()))   // forever_classes passives: 0 (Forever)
+            spCoeff = bonus->direct_damage;
         spellPowerBonus *= spCoeff * attackSpeed * factorMod;
 
         // All done, now proc damage
@@ -1874,8 +1876,10 @@ class spell_sha_windfury_weapon : public AuraScript
         Item* item = ASSERT_NOTNULL(player->GetWeaponForAttack(attType));
 
         int32 enchantId = static_cast<int32>(item->GetEnchantmentId(TEMP_ENCHANTMENT_SLOT));
-        int32 extraAttackPower = 0;
-        SpellInfo const* spellInfo = sSpellMgr->AssertSpellInfo(SPELL_SHAMAN_WINDFURY_WEAPON_R1);
+        // forever_classes: each Windfury rank's passive carries its extra attack power in e0 (with Elemental Weapons'
+        // mod); stock 33757 (46) is no longer used by players. A 0/1 amount falls back to the stock rank search
+        int32 extraAttackPower = aurEff->GetAmount() > 1 ? aurEff->GetAmount() : 0;
+        SpellInfo const* spellInfo = extraAttackPower ? nullptr : sSpellMgr->AssertSpellInfo(SPELL_SHAMAN_WINDFURY_WEAPON_R1);
         while (spellInfo)
         {
             if (spellInfo->GetEffect(EFFECT_0).MiscValue == enchantId)

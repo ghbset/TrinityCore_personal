@@ -335,7 +335,13 @@ bool ChaseMovementGenerator::Update(Unit* owner, uint32 diff)
 
     // If currently moving and we're close to the target, let the current spline finish
     // instead of interrupting with a new path (prevents stop-start jitter at close range)
-    if (isMoving)
+    //
+    // ...but never when the unit's speed just changed. The in-flight spline still
+    // carries the velocity it was created with, so letting it finish means a creature
+    // keeps moving at its old speed after a snare expires (or stays slow indefinitely,
+    // if it keeps re-satisfying this condition). Relaunching is the whole point of
+    // UnitSpeedChanged(); this early-return would otherwise swallow it.
+    if (isMoving && !_speedChanged)
     {
         float distToTargetSq = owner->GetExactDistSq(target);
         // If we're within twice max range, the current path will likely get us close enough
@@ -386,8 +392,13 @@ bool ChaseMovementGenerator::Update(Unit* owner, uint32 diff)
 
     // Path stability: skip recalc if destination hasn't changed enough
     // This works for ALL chase modes (predictive, angle-based, nearpoint)
+    //
+    // Skipped when the speed just changed, for the same reason as the isMoving
+    // early-return above: the destination is unchanged when chasing a stationary
+    // target, so without this exemption a creature whose snare expired would never
+    // relaunch its spline and would crawl at the old velocity indefinitely.
     bool destChangedSignificantly = true;
-    if (_lastDestination.has_value() && isMoving)
+    if (_lastDestination.has_value() && isMoving && !_speedChanged)
     {
         float destChangeSq = square(x - _lastDestination->GetPositionX())
                            + square(y - _lastDestination->GetPositionY());
@@ -478,6 +489,10 @@ bool ChaseMovementGenerator::Update(Unit* owner, uint32 diff)
 
     owner->AddUnitState(UNIT_STATE_CHASE_MOVE);
     AddFlag(MOVEMENTGENERATOR_FLAG_INFORM_ENABLED);
+
+    // Past this point a fresh spline is always launched, so it will pick up the
+    // current speed — the pending speed change has been serviced.
+    _speedChanged = false;
 
     Movement::MoveSplineInit init(owner);
 

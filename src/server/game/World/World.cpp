@@ -65,6 +65,7 @@
 #include "Log.h"
 #include "LootItemStorage.h"
 #include "LootMgr.h"
+#include "Luck.h"
 #include "M2Stores.h"
 #include "MapManager.h"
 #include "Memory.h"
@@ -2157,6 +2158,7 @@ void World::SetInitialWorldSettings()
 
     // Loot tables
     LoadLootTables();
+    Luck::CreateTables();
 
     TC_LOG_INFO("server.loading", "Loading Skill Discovery Table...");
     LoadSkillDiscoveryTable();
