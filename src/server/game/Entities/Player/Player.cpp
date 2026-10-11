@@ -16,6 +16,7 @@
  */
 
 #include "Player.h"
+#include <unordered_set>
 #include <array>
 #include <mutex>
 #include <unordered_map>
@@ -12696,6 +12697,7 @@ namespace
 {
     std::mutex s_wardrobeLock;
     std::unordered_map<ObjectGuid::LowType, std::array<uint32, EQUIPMENT_SLOT_END>> s_wardrobe;
+    std::unordered_set<ObjectGuid::LowType> s_wardrobeRawViewers;   // players who see everyone else's worn gear
 
     uint32 GetWardrobeAppearance(ObjectGuid::LowType guid, uint8 slot)
     {
@@ -12705,9 +12707,60 @@ namespace
     }
 }
 
+TC_GAME_API bool WardrobeViewsRaw(Player const* viewer)
+{
+    std::lock_guard<std::mutex> lock(s_wardrobeLock);
+    return s_wardrobeRawViewers.count(viewer->GetGUID().GetCounter()) != 0;
+}
+
+/// What a viewer with looks turned off is sent for one of @p owner's visible-item fields: the worn item's own
+/// entry and enchants. False = the field is not overridden by a look, send it as stored.
+TC_GAME_API bool WardrobeRawField(Player const* owner, uint16 index, uint32& value)
+{
+    if (index < PLAYER_VISIBLE_ITEM_1_ENTRYID || index > PLAYER_VISIBLE_ITEM_19_ENCHANTMENT)
+        return false;
+    uint8 const slot = (index - PLAYER_VISIBLE_ITEM_1_ENTRYID) / 2;
+    if (!GetWardrobeAppearance(owner->GetGUID().GetCounter(), slot))
+        return false;
+    Item const* item = owner->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+    if (!item)
+        return false;
+    if ((index - PLAYER_VISIBLE_ITEM_1_ENTRYID) % 2 == 0)
+        value = item->transmog ? item->transmog : item->GetEntry();
+    else
+        value = (item->GetEnchantmentId(PERM_ENCHANTMENT_SLOT) & 0xFFFF) | (item->GetEnchantmentId(TEMP_ENCHANTMENT_SLOT) & 0xFFFF) << 16;
+    return true;
+}
+
 /// @param itemEntry the item whose look to show in @p slot; 0 = the worn item's own look, WARDROBE_HIDDEN = nothing.
+/// ponytail: slot WARDROBE_SLOT_VIEW_RAW rides on this call (itemEntry 1 / 0 = that viewer sees worn gear / looks)
+/// so livescripts need no new binding; give it its own TSPlayer method if a third switch ever appears.
 TC_GAME_API void SetWardrobeAppearance(Player* player, uint8 slot, uint32 itemEntry)
 {
+    if (slot == WARDROBE_SLOT_VIEW_RAW)
+    {
+        {
+            std::lock_guard<std::mutex> lock(s_wardrobeLock);
+            if (itemEntry) s_wardrobeRawViewers.insert(player->GetGUID().GetCounter());
+            else s_wardrobeRawViewers.erase(player->GetGUID().GetCounter());
+        }
+        // Send the players in sight again: the fields a look overrides are rebuilt per viewer.
+        for (ObjectGuid const& guid : player->m_clientGUIDs)
+        {
+            if (!guid.IsPlayer())
+                continue;
+            Player* other = ObjectAccessor::GetPlayer(*player, guid);
+            if (!other || other == player)
+                continue;
+            for (uint8 s = 0; s < EQUIPMENT_SLOT_END; ++s)
+                if (GetWardrobeAppearance(guid.GetCounter(), s))
+                {
+                    other->ForceValuesUpdateAtIndex(PLAYER_VISIBLE_ITEM_1_ENTRYID + s * 2);
+                    other->ForceValuesUpdateAtIndex(PLAYER_VISIBLE_ITEM_1_ENCHANTMENT + s * 2);
+                }
+        }
+        return;
+    }
     if (slot >= EQUIPMENT_SLOT_END)
         return;
     {

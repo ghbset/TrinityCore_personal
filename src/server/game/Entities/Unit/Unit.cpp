@@ -978,6 +978,11 @@ void GetCombatValidateStats(unsigned long long& count, unsigned long long& viol,
 
     // @duskhaven-port - allow scripts to modify incoming damage (e.g. prevent player death)
     FIRE(Unit, OnCustomDamageTaken, TSUnit(victim), TSUnit(attacker), TSMutableNumber<uint32>(&damage));
+    // @tswow-begin per-creature variant, still before the kill check
+    if (Creature* victimCreature = victim->ToCreature())
+        FIRE_ID(victimCreature->GetCreatureTemplate()->events.id, Creature, OnDamageTakenEarly,
+                TSCreature(victimCreature), TSUnit(attacker), TSMutableNumber<uint32>(&damage));
+    // @tswow-end
 
     if (health <= damage)
     {
@@ -13983,16 +13988,23 @@ void Unit::BuildValuesUpdate(uint8 updateType, ByteBuffer* data, Player const* t
         visibleFlag |= UF_FLAG_PARTY_MEMBER;
 
     Creature const* creature = ToCreature();
+    // Wardrobe: a viewer with other players' looks turned off is sent the worn gear in the fields a look overrides.
+    Player const* wardrobeRaw = GetTypeId() == TYPEID_PLAYER && target != this && WardrobeViewsRaw(target) ? ToPlayer() : nullptr;
+    uint32 rawValue = 0;
     for (uint16 index = 0; index < m_valuesCount; ++index)
     {
         if (_fieldNotifyFlags & flags[index] ||
+            // a hidden slot is stored as 0, which a create block leaves out
+            (wardrobeRaw && updateType != UPDATETYPE_VALUES && WardrobeRawField(wardrobeRaw, index, rawValue)) ||
             ((flags[index] & visibleFlag) & UF_FLAG_SPECIAL_INFO) ||
             ((updateType == UPDATETYPE_VALUES ? _changesMask.GetBit(index) : m_uint32Values[index]) && (flags[index] & visibleFlag)) ||
             (index == UNIT_FIELD_AURASTATE && HasFlag(UNIT_FIELD_AURASTATE, PER_CASTER_AURA_STATE_MASK)))
         {
             updateMask.SetBit(index);
 
-            if (index == UNIT_NPC_FLAGS)
+            if (wardrobeRaw && WardrobeRawField(wardrobeRaw, index, rawValue))
+                fieldBuffer << rawValue;
+            else if (index == UNIT_NPC_FLAGS)
             {
                 uint32 appendValue = m_uint32Values[UNIT_NPC_FLAGS];
 

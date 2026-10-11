@@ -909,6 +909,10 @@ struct ResurrectionData
 // Wardrobe: per-slot appearance override (Player.cpp). WARDROBE_HIDDEN hides the slot's model.
 constexpr uint32 WARDROBE_HIDDEN = 0xFFFFFFFF;
 TC_GAME_API void SetWardrobeAppearance(Player* player, uint8 slot, uint32 itemEntry);
+// A viewer who has turned other players' wardrobe looks off is sent their worn gear instead (Unit::BuildValuesUpdate).
+constexpr uint8 WARDROBE_SLOT_VIEW_RAW = 255;   // SetWardrobeAppearance(viewer, this, 1 / 0): that viewer's switch
+TC_GAME_API bool WardrobeViewsRaw(Player const* viewer);
+TC_GAME_API bool WardrobeRawField(Player const* owner, uint16 index, uint32& value);
 
 class TC_GAME_API Player : public Unit, public GridObject<Player>
 {

@@ -413,18 +413,19 @@ bool WorldSession::Update(uint32 diff, PacketFilter& updater)
                         // skip STATUS_LOGGEDIN opcode unexpected errors if player logout sometime ago - this can be network lag delayed packets
                         //! If player didn't log out a while ago, it means packets are being sent while the server does not recognize
                         //! the client to be in world yet. We will re-add the packets to the bottom of the queue and process them later.
+                        // @duskhaven-port - route custom packets to the NotInWorld handler
+                        // so scripts can service clients at the character-select screen.
+                        // If the packet isn't a whitelisted custom opcode, fall through
+                        // to the normal requeue path. Before the recently-logged-out test: a
+                        // player back at character select after playing is not in world either.
+                        if (packet->GetOpcode() == CMSG_CUSTOM
+                            && HandleCustomNotInWorld(*packet))
+                        {
+                            // packet consumed — let default delete path clean it up
+                            break;
+                        }
                         if (!m_playerRecentlyLogout)
                         {
-                            // @duskhaven-port - route custom packets to the NotInWorld handler
-                            // so scripts can service clients at the character-select screen.
-                            // If the packet isn't a whitelisted custom opcode, fall through
-                            // to the normal requeue path.
-                            if (packet->GetOpcode() == CMSG_CUSTOM
-                                && HandleCustomNotInWorld(*packet))
-                            {
-                                // packet consumed — let default delete path clean it up
-                                break;
-                            }
                             requeuePackets.push_back(packet);
                             deletePacket = false;
                             TC_LOG_DEBUG("network", "Re-enqueueing packet with opcode {} with with status STATUS_LOGGEDIN. "
@@ -1941,7 +1942,12 @@ bool WorldSession::HandleCustomNotInWorld(WorldPacket& packet)
     {
         opcode_t opcode = buffer.GetOpcode();
         auto it = notInWorldCustomOpcodeMap.find(opcode);
-        if (it != notInWorldCustomOpcodeMap.end() && it->second)
+        // A script that registered OnReceiveNotInWorld for this opcode by id has opted it in: RegisterPacketForNotInWorld
+        // has no script binding, so the map alone was always empty and nothing was ever delivered.
+        auto const& cbs = ts_events.CustomPacket.OnReceiveNotInWorld_callbacks;
+        bool const scripted = (opcode < cbs.m_id_lua_callbacks.size() && !cbs.m_id_lua_callbacks[opcode].empty())
+            || (opcode < cbs.m_id_cxx_callbacks.size() && !cbs.m_id_cxx_callbacks[opcode].empty());
+        if (scripted || (it != notInWorldCustomOpcodeMap.end() && it->second))
         {
             buffer.callOnSuccess();
             return true;
