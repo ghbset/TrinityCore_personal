@@ -611,6 +611,9 @@ void WorldSession::LogoutPlayer(bool save)
     m_playerSave = save;
     if (_player)
     {
+        // captured up front: RemovePlayerFromMap below deletes _player
+        ObjectGuid const logoutGuid = _player->GetGUID();
+
         if (ObjectGuid lguid = _player->GetLootGUID())
             DoLootRelease(lguid);
 
@@ -745,13 +748,15 @@ void WorldSession::LogoutPlayer(bool save)
         if (Map* _map = _player->FindMap())
             _map->RemovePlayerFromMap(_player, true);
 
-        ObjectGuid const logoutGuid = _player->GetGUID();
         SetPlayer(nullptr); //! Pointer already deleted during RemovePlayerFromMap
 
         //! Send the 'logout complete' packet to the client
         //! Client will respond by sending 3x CMSG_CANCEL_TRADE, which we currently dont handle
         //! Held back until the logout save has committed (ProcessQueryCallbacks), so char select can't show stale data
-        if (sWorld->IsPlayerSavePending(logoutGuid))
+        //! No socket (disconnect / session destructor): nobody to tell, the save commits via the World tracker regardless
+        if (PlayerDisconnected())
+            {}
+        else if (sWorld->IsPlayerSavePending(logoutGuid))
             _logoutCompleteWaitingForSave = logoutGuid;
         else
         {
