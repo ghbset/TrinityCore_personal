@@ -1393,7 +1393,8 @@ class TC_GAME_API Player : public Unit, public GridObject<Player>
         static void Customize(CharacterCustomizeInfo const* customizeInfo, CharacterDatabaseTransaction trans);
         static void SavePositionInDB(WorldLocation const& loc, uint16 zoneId, ObjectGuid guid, CharacterDatabaseTransaction trans);
 
-        static void DeleteFromDB(ObjectGuid playerguid, uint32 accountId, bool updateRealmChars = true, bool deleteFinally = false);
+        // outTrans: when set, the delete transaction is handed back uncommitted (caller commits it)
+        static void DeleteFromDB(ObjectGuid playerguid, uint32 accountId, bool updateRealmChars = true, bool deleteFinally = false, CharacterDatabaseTransaction* outTrans = nullptr);
         static void DeleteOldCharacters();
         static void DeleteOldCharacters(uint32 keepDays);
 

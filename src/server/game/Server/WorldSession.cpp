@@ -691,7 +691,9 @@ void WorldSession::LogoutPlayer(bool save)
                 _player->SetUInt32Value(PLAYER_FIELD_BUYBACK_PRICE_1 + eslot, 0);
                 _player->SetUInt32Value(PLAYER_FIELD_BUYBACK_TIMESTAMP_1 + eslot, 0);
             }
-            _player->SaveToDB();
+            CharacterDatabaseTransaction trans = CharacterDatabase.BeginTransaction();
+            _player->SaveToDB(trans);
+            sWorld->AddPendingPlayerSave(_player->GetGUID(), trans);
         }
 
         ///- Leave all channels before player delete...
@@ -743,12 +745,19 @@ void WorldSession::LogoutPlayer(bool save)
         if (Map* _map = _player->FindMap())
             _map->RemovePlayerFromMap(_player, true);
 
+        ObjectGuid const logoutGuid = _player->GetGUID();
         SetPlayer(nullptr); //! Pointer already deleted during RemovePlayerFromMap
 
         //! Send the 'logout complete' packet to the client
         //! Client will respond by sending 3x CMSG_CANCEL_TRADE, which we currently dont handle
-        SendPacket(WorldPackets::Character::LogoutComplete().Write());
-        TC_LOG_DEBUG("network", "SESSION: Sent SMSG_LOGOUT_COMPLETE Message");
+        //! Held back until the logout save has committed (ProcessQueryCallbacks), so char select can't show stale data
+        if (sWorld->IsPlayerSavePending(logoutGuid))
+            _logoutCompleteWaitingForSave = logoutGuid;
+        else
+        {
+            SendPacket(WorldPackets::Character::LogoutComplete().Write());
+            TC_LOG_DEBUG("network", "SESSION: Sent SMSG_LOGOUT_COMPLETE Message");
+        }
 
         //! Since each account can only have one online character at any given time, ensure all characters for active account are marked as offline
         CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_ACCOUNT_ONLINE);
@@ -1424,6 +1433,20 @@ void WorldSession::ProcessQueryCallbacks()
     _queryProcessor.ProcessReadyCallbacks();
     _transactionCallbacks.ProcessReadyCallbacks();
     _queryHolderProcessor.ProcessReadyCallbacks();
+
+    if (!_logoutCompleteWaitingForSave.IsEmpty() && !sWorld->IsPlayerSavePending(_logoutCompleteWaitingForSave))
+    {
+        _logoutCompleteWaitingForSave.Clear();
+        SendPacket(WorldPackets::Character::LogoutComplete().Write());
+        TC_LOG_DEBUG("network", "SESSION: Sent SMSG_LOGOUT_COMPLETE Message (after logout save)");
+    }
+
+    if (!_loginWaitingForSave.IsEmpty() && !sWorld->IsPlayerSavePending(_loginWaitingForSave))
+    {
+        ObjectGuid const guid = _loginWaitingForSave;
+        _loginWaitingForSave.Clear();
+        StartPlayerLogin(guid);
+    }
 }
 
 TransactionCallback& WorldSession::AddTransactionCallback(TransactionCallback&& callback)

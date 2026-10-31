@@ -4133,7 +4133,7 @@ bool Player::HasActiveSpell(uint32 spell) const
  * @param updateRealmChars when this flag is set, the amount of characters on that realm will be updated in the realmlist
  * @param deleteFinally    if this flag is set, the config option will be ignored and the character will be permanently removed from the database
  */
-void Player::DeleteFromDB(ObjectGuid playerguid, uint32 accountId, bool updateRealmChars, bool deleteFinally)
+void Player::DeleteFromDB(ObjectGuid playerguid, uint32 accountId, bool updateRealmChars, bool deleteFinally, CharacterDatabaseTransaction* outTrans)
 {
     // Avoid realm-update for non-existing account
     if (accountId == 0)
@@ -4499,7 +4499,10 @@ void Player::DeleteFromDB(ObjectGuid playerguid, uint32 accountId, bool updateRe
     trans->Append(stmt);
     // @tswow-end
 
-    CharacterDatabase.CommitTransaction(trans);
+    if (outTrans)
+        *outTrans = trans;
+    else
+        CharacterDatabase.CommitTransaction(trans);
 
     if (updateRealmChars)
         sWorld->UpdateRealmCharCount(accountId);

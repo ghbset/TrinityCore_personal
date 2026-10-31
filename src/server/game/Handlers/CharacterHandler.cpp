@@ -702,9 +702,23 @@ void WorldSession::HandleCharDeleteOpcode(WorldPacket& recvData)
     }
 
     sCalendarMgr->RemoveAllPlayerEventsAndInvites(guid);
-    Player::DeleteFromDB(guid, accountId);
+    // Reply only once the delete has committed; otherwise the client's follow-up CMSG_CHAR_ENUM can run on
+    // another DB worker first and still list the character.
+    CharacterDatabaseTransaction trans;
+    // realm char count is refreshed after the commit too, or its query can still count the deleted character
+    Player::DeleteFromDB(guid, accountId, false, false, &trans);
+    if (!trans) // unsupported CharDelete.Method: DeleteFromDB already committed what it had
+    {
+        sWorld->UpdateRealmCharCount(accountId);
+        SendCharDelete(CHAR_DELETE_SUCCESS);
+        return;
+    }
 
-    SendCharDelete(CHAR_DELETE_SUCCESS);
+    AddTransactionCallback(CharacterDatabase.AsyncCommitTransaction(trans)).AfterComplete([this, accountId](bool success)
+    {
+        sWorld->UpdateRealmCharCount(accountId);
+        SendCharDelete(success ? CHAR_DELETE_SUCCESS : CHAR_DELETE_FAILED);
+    });
 }
 
 void WorldSession::HandlePlayerLoginOpcode(WorldPacket& recvData)
@@ -728,6 +742,18 @@ void WorldSession::HandlePlayerLoginOpcode(WorldPacket& recvData)
         return;
     }
 
+    // a logout save of this character is still committing (e.g. relog / reconnect): start once it is done
+    if (sWorld->IsPlayerSavePending(playerGuid))
+    {
+        _loginWaitingForSave = playerGuid;
+        return;
+    }
+
+    StartPlayerLogin(playerGuid);
+}
+
+void WorldSession::StartPlayerLogin(ObjectGuid playerGuid)
+{
     std::shared_ptr<LoginQueryHolder> holder = std::make_shared<LoginQueryHolder>(GetAccountId(), playerGuid);
     if (!holder->Initialize())
     {
@@ -1207,18 +1233,22 @@ void WorldSession::HandleCharRenameCallBack(std::shared_ptr<CharacterRenameInfo>
     stmt->setUInt16(1, atLoginFlags);
     stmt->setUInt32(2, guidLow);
 
-    CharacterDatabase.Execute(stmt);
+    trans->Append(stmt);
 
     // Removed declined name from db
     stmt = CharacterDatabase.GetPreparedStatement(CHAR_DEL_DECLINED_NAME);
 
     stmt->setUInt32(0, guidLow);
 
-    CharacterDatabase.Execute(stmt);
+    trans->Append(stmt);
 
     TC_LOG_INFO("entities.player.character", "Account: {} (IP: {}) Character:[{}] ({}) Changed name to: {}", GetAccountId(), GetRemoteAddress(), oldName, renameInfo->Guid.ToString(), renameInfo->Name);
 
-    SendCharRename(RESPONSE_SUCCESS, renameInfo.get());
+    // reply after the commit, or the client's next char enum / login can still read the old name and flag
+    AddTransactionCallback(CharacterDatabase.AsyncCommitTransaction(trans)).AfterComplete([this, renameInfo](bool success)
+    {
+        SendCharRename(success ? RESPONSE_SUCCESS : CHAR_CREATE_ERROR, renameInfo.get());
+    });
 
     sCharacterCache->UpdateCharacterData(renameInfo->Guid, renameInfo->Name);
 }
@@ -1507,11 +1537,13 @@ void WorldSession::HandleCharCustomizeCallback(std::shared_ptr<CharacterCustomiz
         trans->Append(stmt);
     }
 
-    CharacterDatabase.CommitTransaction(trans);
-
     sCharacterCache->UpdateCharacterData(customizeInfo->Guid, customizeInfo->Name, customizeInfo->Gender);
 
-    SendCharCustomize(RESPONSE_SUCCESS, customizeInfo.get());
+    // reply after the commit, or the client's next char enum / login can still read the old data
+    AddTransactionCallback(CharacterDatabase.AsyncCommitTransaction(trans)).AfterComplete([this, customizeInfo](bool success)
+    {
+        SendCharCustomize(success ? RESPONSE_SUCCESS : CHAR_CREATE_ERROR, customizeInfo.get());
+    });
 
     TC_LOG_INFO("entities.player.character", "Account: {} (IP: {}), Character[{}] ({}) Customized to: {}",
         GetAccountId(), GetRemoteAddress(), oldName, customizeInfo->Guid.ToString(), customizeInfo->Name);
@@ -2184,11 +2216,13 @@ void WorldSession::HandleCharFactionOrRaceChangeCallback(std::shared_ptr<Charact
         }
     }
 
-    CharacterDatabase.CommitTransaction(trans);
-
     TC_LOG_DEBUG("entities.player", "{} (IP: {}) changed race from {} to {}", GetPlayerInfo(), GetRemoteAddress(), oldRace, factionChangeInfo->Race);
 
-    SendCharFactionChange(RESPONSE_SUCCESS, factionChangeInfo.get());
+    // reply after the commit, or a login before it loads the old race/at_login and saves them back
+    AddTransactionCallback(CharacterDatabase.AsyncCommitTransaction(trans)).AfterComplete([this, factionChangeInfo](bool success)
+    {
+        SendCharFactionChange(success ? RESPONSE_SUCCESS : CHAR_CREATE_ERROR, factionChangeInfo.get());
+    });
 }
 
 void WorldSession::SendCharCreate(ResponseCodes result)

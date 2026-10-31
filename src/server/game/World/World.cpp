@@ -3966,6 +3966,35 @@ uint64 World::getWorldState(uint32 index) const
 void World::ProcessQueryCallbacks()
 {
     _queryProcessor.ProcessReadyCallbacks();
+
+    std::lock_guard<std::mutex> lock(_pendingPlayerSavesLock);
+    for (auto itr = _pendingPlayerSaves.begin(); itr != _pendingPlayerSaves.end();)
+    {
+        if (itr->second.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+            itr = _pendingPlayerSaves.erase(itr);
+        else
+            ++itr;
+    }
+}
+
+void World::AddPendingPlayerSave(ObjectGuid guid, CharacterDatabaseTransaction trans)
+{
+    if (!trans->GetSize())
+        return;
+
+    TransactionFuture future = std::move(CharacterDatabase.AsyncCommitTransaction(trans).m_future);
+    std::lock_guard<std::mutex> lock(_pendingPlayerSavesLock);
+    _pendingPlayerSaves.emplace(guid, std::move(future));
+}
+
+bool World::IsPlayerSavePending(ObjectGuid guid)
+{
+    std::lock_guard<std::mutex> lock(_pendingPlayerSavesLock);
+    auto range = _pendingPlayerSaves.equal_range(guid);
+    for (auto itr = range.first; itr != range.second; ++itr)
+        if (itr->second.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+            return true;
+    return false;
 }
 
 void World::ReloadRBAC()

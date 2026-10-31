@@ -734,6 +734,7 @@ class TC_GAME_API WorldSession
         void HandlePlayerLoginOpcode(WorldPacket& recvPacket);
         void HandleCharEnum(PreparedQueryResult result);
         void HandlePlayerLogin(LoginQueryHolder const& holder);
+        void StartPlayerLogin(ObjectGuid playerGuid);
         void HandleCharFactionOrRaceChange(WorldPacket& recvData);
         void HandleCharFactionOrRaceChangeCallback(std::shared_ptr<CharacterFactionChangeInfo> factionChangeInfo, PreparedQueryResult result);
         void HandleCharRenameOpcode(WorldPacket& recvData);
@@ -1337,6 +1338,8 @@ class TC_GAME_API WorldSession
         time_t _logoutTime;
         bool m_inQueue;                                     // session wait in auth.queue
         bool m_playerLoading;                               // code processed in LoginPlayer
+        ObjectGuid _loginWaitingForSave;                    // CMSG_PLAYER_LOGIN held until this guid's logout save commits
+        ObjectGuid _logoutCompleteWaitingForSave;           // SMSG_LOGOUT_COMPLETE held until this guid's logout save commits
         bool m_playerLogout;                                // code processed in LogoutPlayer
         bool m_playerRecentlyLogout;
         bool m_playerSave;

@@ -762,6 +762,11 @@ class TC_GAME_API World
 
         void UpdateRealmCharCount(uint32 accid);
 
+        // Logout saves still being committed; a login for that guid waits until they are done (else its
+        // LoginQueryHolder can read the pre-save rows on another DB worker).
+        void AddPendingPlayerSave(ObjectGuid guid, CharacterDatabaseTransaction trans);
+        bool IsPlayerSavePending(ObjectGuid guid);
+
         LocaleConstant GetAvailableDbcLocale(LocaleConstant locale) const { if (m_availableDbcLocaleMask & (1 << locale)) return locale; else return m_defaultDbcLocale; }
 
         // used World DB version
@@ -887,6 +892,8 @@ class TC_GAME_API World
         void DoGuidWarningRestart();
         void DoGuidAlertRestart();
         QueryCallbackProcessor _queryProcessor;
+        std::unordered_multimap<ObjectGuid, TransactionFuture> _pendingPlayerSaves;
+        std::mutex _pendingPlayerSavesLock;
 
         std::string _guidWarningMsg;
         std::string _alertRestartReason;
