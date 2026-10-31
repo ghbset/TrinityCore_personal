@@ -20,18 +20,25 @@ class spell_forever_rog_improved_expose_armor : public SpellScript
     PrepareSpellScript(spell_forever_rog_improved_expose_armor);
 
     uint8 _comboPoints = 0;
+    bool _landed = false;
 
     void RecordComboPoints()
     {
         _comboPoints = GetCaster()->GetComboPoints();
     }
 
+    // e0 armor aura reached the target (OnEffectHitTarget runs only on a real hit; AfterHit also runs for misses)
+    void MarkLanded(SpellEffIndex /*effIndex*/)
+    {
+        _landed = true;
+    }
+
     void Refund()
     {
         Unit* caster = GetCaster();
         Unit* target = GetExplTargetUnit();
-        // points still there: the strike missed and nothing was spent
-        if (!target || caster->GetComboPoints())
+        // a hit, not "no points left": Ruthlessness's FINISH proc adds a point back before AfterCast
+        if (!target || !_landed)
             return;
 
         for (AuraEffect const* refund : caster->GetAuraEffectsByType(SPELL_AURA_DUMMY))
@@ -48,6 +55,7 @@ class spell_forever_rog_improved_expose_armor : public SpellScript
     void Register() override
     {
         BeforeCast += SpellCastFn(spell_forever_rog_improved_expose_armor::RecordComboPoints);
+        OnEffectHitTarget += SpellEffectFn(spell_forever_rog_improved_expose_armor::MarkLanded, EFFECT_0, SPELL_EFFECT_APPLY_AURA);
         AfterCast += SpellCastFn(spell_forever_rog_improved_expose_armor::Refund);
     }
 };

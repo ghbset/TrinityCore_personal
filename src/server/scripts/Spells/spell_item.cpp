@@ -38,6 +38,13 @@
 #include "SpellMgr.h"
 #include "SpellScript.h"
 
+// Gnome Engineering Specialization (forever_classes racials): DUMMY auras with MiscValue 20593 cut every engineering
+// device failure by their amount (%). A failure a device rolled goes through only with this chance.
+static bool EngineeringFailureStands(Unit const* caster)
+{
+    return roll_chance_f(100.0f - float(caster->GetTotalAuraModifierByMiscValue(SPELL_AURA_DUMMY, 20593)));
+}
+
 enum GenericData
 {
     SPELL_ARCANITE_DRAGONLING           = 19804,
@@ -699,7 +706,7 @@ class spell_item_goblin_bomb_dispenser : public SpellScript
     void HandleDummy(SpellEffIndex /*effIndex*/)
     {
         if (Item* item = GetCastItem())
-            GetCaster()->CastSpell(GetCaster(), roll_chance_i(95) ? SPELL_SUMMON_GOBLIN_BOMB : SPELL_MALFUNCTION_EXPLOSION, item);
+            GetCaster()->CastSpell(GetCaster(), (roll_chance_i(95) || !EngineeringFailureStands(GetCaster())) ? SPELL_SUMMON_GOBLIN_BOMB : SPELL_MALFUNCTION_EXPLOSION, item);
     }
 
     void Register() override
@@ -765,7 +772,7 @@ class spell_item_defibrillate : public SpellScriptLoader
 
             void HandleScript(SpellEffIndex effIndex)
             {
-                if (roll_chance_i(_chance))
+                if (roll_chance_i(_chance) && EngineeringFailureStands(GetCaster()))
                 {
                     PreventHitDefaultEffect(effIndex);
                     if (_failSpell)
@@ -1222,7 +1229,7 @@ class spell_item_gnomish_death_ray : public SpellScript
         Unit* caster = GetCaster();
         if (Unit* target = GetHitUnit())
         {
-            if (urand(0, 99) < 15)
+            if (urand(0, 99) < 15 && EngineeringFailureStands(caster))
                 caster->CastSpell(caster, SPELL_GNOMISH_DEATH_RAY_SELF, true);    // failure
             else
                 caster->CastSpell(target, SPELL_GNOMISH_DEATH_RAY_TARGET, true);
@@ -1647,6 +1654,8 @@ class spell_item_net_o_matic : public SpellScript
         {
             uint32 spellId = SPELL_NET_O_MATIC_TRIGGERED3;
             uint32 roll = urand(0, 99);
+            if (roll < 4 && !EngineeringFailureStands(GetCaster()))
+                roll = 99;
             if (roll < 2)                            // 2% for 30 sec self root (off-like chance unknown)
                 spellId = SPELL_NET_O_MATIC_TRIGGERED1;
             else if (roll < 4)                       // 2% for 20 sec root, charge to target (off-like chance unknown)
@@ -2008,7 +2017,7 @@ class spell_item_dimensional_ripper_everlook : public SpellScript
     void HandleScript(SpellEffIndex /* effIndex */)
     {
         int32 r = irand(0, 119);
-        if (r <= 70)                               // 7/12 success
+        if (r <= 70 || !EngineeringFailureStands(GetCaster()))   // 7/12 success
             return;
 
         Unit* caster = GetCaster();
@@ -2052,7 +2061,7 @@ class spell_item_ultrasafe_transporter : public SpellScript
 
     void HandleScript(SpellEffIndex /* effIndex */)
     {
-        if (!roll_chance_i(50)) // 50% success
+        if (!roll_chance_i(50) || !EngineeringFailureStands(GetCaster())) // 50% success
             return;
 
         Unit* caster = GetCaster();
@@ -2121,7 +2130,7 @@ class spell_item_dimensional_ripper_area52 : public SpellScript
 
     void HandleScript(SpellEffIndex /* effIndex */)
     {
-        if (!roll_chance_i(50)) // 50% success
+        if (!roll_chance_i(50) || !EngineeringFailureStands(GetCaster())) // 50% success
             return;
 
         Unit* caster = GetCaster();
@@ -2868,7 +2877,7 @@ class spell_item_nigh_invulnerability : public SpellScript
         Unit* caster = GetCaster();
         if (Item* castItem = GetCastItem())
         {
-            if (roll_chance_i(86))                  // Nigh-Invulnerability   - success
+            if (roll_chance_i(86) || !EngineeringFailureStands(caster))     // Nigh-Invulnerability - success
                 caster->CastSpell(caster, SPELL_NIGH_INVULNERABILITY, castItem);
             else                                    // Complete Vulnerability - backfire in 14% casts
                 caster->CastSpell(caster, SPELL_COMPLETE_VULNERABILITY, castItem);
@@ -2899,7 +2908,7 @@ class spell_item_poultryizer : public SpellScript
     void HandleDummy(SpellEffIndex /* effIndex */)
     {
         if (GetCastItem() && GetHitUnit())
-            GetCaster()->CastSpell(GetHitUnit(), roll_chance_i(80) ? SPELL_POULTRYIZER_SUCCESS : SPELL_POULTRYIZER_BACKFIRE, GetCastItem());
+            GetCaster()->CastSpell(GetHitUnit(), (roll_chance_i(80) || !EngineeringFailureStands(GetCaster())) ? SPELL_POULTRYIZER_SUCCESS : SPELL_POULTRYIZER_BACKFIRE, GetCastItem());
     }
 
     void Register() override
@@ -3120,7 +3129,7 @@ class spell_item_nitro_boosts : public SpellScript
         AreaTableEntry const* areaEntry = sAreaTableStore.LookupEntry(caster->GetAreaId());
         bool success = true;
         if (areaEntry && areaEntry->IsFlyable() && !caster->GetMap()->IsDungeon())
-            success = roll_chance_i(95); // nitro boosts can only fail in flying-enabled locations on 3.3.5
+            success = roll_chance_i(95) || !EngineeringFailureStands(caster); // nitro boosts can only fail in flying-enabled locations on 3.3.5
         caster->CastSpell(caster, success ? SPELL_NITRO_BOOSTS_SUCCESS : SPELL_NITRO_BOOSTS_BACKFIRE, GetCastItem());
     }
 
@@ -3150,7 +3159,7 @@ class spell_item_nitro_boosts_backfire : public AuraScript
         float curZ = GetTarget()->GetPositionZ();
         if (curZ < lastZ)
         {
-            if (roll_chance_i(80)) // we don't have enough sniffs to verify this, guesstimate
+            if (roll_chance_i(80) || !EngineeringFailureStands(GetTarget())) // we don't have enough sniffs to verify this, guesstimate
                 GetTarget()->CastSpell(GetTarget(), SPELL_NITRO_BOOSTS_PARACHUTE, effect);
             GetAura()->Remove();
         }
@@ -4028,8 +4037,8 @@ class spell_item_mind_control_cap : public SpellScript
         Unit* caster = GetCaster();
         if (Unit* target = GetHitUnit())
         {
-            if (roll_chance_i(ROLL_CHANCE_NO_BACKFIRE))
-                caster->CastSpell(target, roll_chance_i(ROLL_CHANCE_DULLARD) ? SPELL_DULLARD : SPELL_GNOMISH_MIND_CONTROL_CAP, GetCastItem());
+            if (roll_chance_i(ROLL_CHANCE_NO_BACKFIRE) || !EngineeringFailureStands(caster))
+                caster->CastSpell(target, roll_chance_i(ROLL_CHANCE_DULLARD) && EngineeringFailureStands(caster) ? SPELL_DULLARD : SPELL_GNOMISH_MIND_CONTROL_CAP, GetCastItem());
             else
                 target->CastSpell(caster, SPELL_GNOMISH_MIND_CONTROL_CAP, true); // backfire - 5% chance
         }
@@ -4070,6 +4079,8 @@ class spell_item_universal_remote : public SpellScript
         if (Unit* target = GetHitUnit())
         {
             uint8 chance = urand(0, 99);
+            if (chance < 25 && !EngineeringFailureStands(GetCaster()))   // target lock / malfunction = failures
+                chance = 99;
             if (chance < 15)
                 GetCaster()->CastSpell(target, SPELL_TARGET_LOCK, GetCastItem());
             else if (chance < 25)

@@ -208,6 +208,23 @@ class spell_forever_warr_deep_wounds : public AuraScript
     }
 };
 
+// Shield Slam: Forever's "50% chance of dispelling" (e0 DISPEL in the built data).
+class spell_forever_warr_shield_slam : public SpellScript
+{
+    PrepareSpellScript(spell_forever_warr_shield_slam);
+
+    void HandleDispel(SpellEffIndex effIndex)
+    {
+        if (!roll_chance_i(50))
+            PreventHitDefaultEffect(effIndex);
+    }
+
+    void Register() override
+    {
+        OnEffectHitTarget += SpellEffectFn(spell_forever_warr_shield_slam::HandleDispel, EFFECT_0, SPELL_EFFECT_DISPEL);
+    }
+};
+
 void AddSC_forever_talents_warrior()
 {
     RegisterSpellScript(spell_forever_warr_spearing_strike);
@@ -216,4 +233,5 @@ void AddSC_forever_talents_warrior()
     RegisterSpellScript(spell_forever_warr_bloodthrill);
     RegisterSpellScript(spell_forever_warr_blood_craze);
     RegisterSpellScript(spell_forever_warr_dual_wield_specialization);
+    RegisterSpellScript(spell_forever_warr_shield_slam);
 }

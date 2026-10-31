@@ -91,25 +91,34 @@ class spell_forever_racial_plainsrunning : public AuraScript
     }
 };
 
-// Blood Fury (Orc): e2 DUMMY = % more spell power for the duration (3.3.5a has no spell power % aura). The bonus is
-// taken from the player's spell power when the buff lands and given back when it ends.
+// Blood Fury (Orc): e2 PERIODIC_DUMMY = % more spell power for the duration (3.3.5a has no spell power % aura). The
+// bonus is added to the player's spell power when the buff lands, re-read every tick so it follows gear swaps, and
+// given back when it ends.
 class spell_forever_racial_blood_fury : public AuraScript
 {
     PrepareAuraScript(spell_forever_racial_blood_fury);
 
     int32 _bonus = 0;
 
-    void HandleApply(AuraEffect const* aurEff, AuraEffectHandleModes /*mode*/)
+    void Recalculate(AuraEffect const* aurEff)
     {
         Player* player = GetTarget()->ToPlayer();
         if (!player)
             return;
         int32 const power = std::max(player->SpellBaseDamageBonusDone(SPELL_SCHOOL_MASK_MAGIC),
-                                     player->SpellBaseHealingBonusDone(SPELL_SCHOOL_MASK_MAGIC));
-        _bonus = CalculatePct(power, aurEff->GetAmount());
+                                     player->SpellBaseHealingBonusDone(SPELL_SCHOOL_MASK_MAGIC)) - _bonus;
+        int32 const bonus = std::max(0, CalculatePct(power, aurEff->GetAmount()));
+        if (bonus == _bonus)
+            return;
         if (_bonus > 0)
-            player->ApplySpellPowerBonus(_bonus, true);
+            player->ApplySpellPowerBonus(_bonus, false);
+        if (bonus > 0)
+            player->ApplySpellPowerBonus(bonus, true);
+        _bonus = bonus;
     }
+
+    void HandleApply(AuraEffect const* aurEff, AuraEffectHandleModes /*mode*/) { Recalculate(aurEff); }
+    void HandleTick(AuraEffect const* aurEff) { Recalculate(aurEff); }
 
     void HandleRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
     {
@@ -121,8 +130,9 @@ class spell_forever_racial_blood_fury : public AuraScript
 
     void Register() override
     {
-        AfterEffectApply += AuraEffectApplyFn(spell_forever_racial_blood_fury::HandleApply, EFFECT_2, SPELL_AURA_DUMMY, AURA_EFFECT_HANDLE_REAL);
-        AfterEffectRemove += AuraEffectRemoveFn(spell_forever_racial_blood_fury::HandleRemove, EFFECT_2, SPELL_AURA_DUMMY, AURA_EFFECT_HANDLE_REAL);
+        AfterEffectApply += AuraEffectApplyFn(spell_forever_racial_blood_fury::HandleApply, EFFECT_2, SPELL_AURA_PERIODIC_DUMMY, AURA_EFFECT_HANDLE_REAL);
+        OnEffectPeriodic += AuraEffectPeriodicFn(spell_forever_racial_blood_fury::HandleTick, EFFECT_2, SPELL_AURA_PERIODIC_DUMMY);
+        AfterEffectRemove += AuraEffectRemoveFn(spell_forever_racial_blood_fury::HandleRemove, EFFECT_2, SPELL_AURA_PERIODIC_DUMMY, AURA_EFFECT_HANDLE_REAL);
     }
 };
 
@@ -131,7 +141,9 @@ class spell_forever_racial_touch_of_the_grave : public SpellScript
 {
     PrepareSpellScript(spell_forever_racial_touch_of_the_grave);
 
-    void HandleLaunch(SpellEffIndex /*effIndex*/)
+    // HIT_TARGET: the leech computes its damage from the effect value right after this hook (a LAUNCH value is
+    // recomputed and lost).
+    void HandleHit(SpellEffIndex /*effIndex*/)
     {
         if (Unit* caster = GetCaster())
             SetEffectValue(int32(caster->CountPctFromMaxHealth(GetEffectValue())));
@@ -139,11 +151,11 @@ class spell_forever_racial_touch_of_the_grave : public SpellScript
 
     void Register() override
     {
-        OnEffectLaunchTarget += SpellEffectFn(spell_forever_racial_touch_of_the_grave::HandleLaunch, EFFECT_0, SPELL_EFFECT_ANY);
+        OnEffectHitTarget += SpellEffectFn(spell_forever_racial_touch_of_the_grave::HandleHit, EFFECT_0, SPELL_EFFECT_HEALTH_LEECH);
     }
 };
 
-// Shadowmeld (Night Elf): Forever's cooldown is short out of combat; used in combat it is e1's BasePoints (ms). The core
+// Shadowmeld (Night Elf): Forever's cooldown is short out of combat; used in combat it is e1's value (ms). The core
 // starts the cooldown when the aura ends (before this hook), so the hook lengthens it to e1 when the cast was in combat.
 class spell_forever_racial_shadowmeld : public AuraScript
 {
@@ -161,7 +173,7 @@ class spell_forever_racial_shadowmeld : public AuraScript
         if (!_inCombat)
             return;
         Unit* target = GetTarget();
-        int32 const want = GetSpellInfo()->GetEffect(EFFECT_1).BasePoints;
+        int32 const want = GetSpellInfo()->GetEffect(EFFECT_1).CalcValue(target);   // BasePoints + 1 = 120000
         int32 const left = int32(target->GetSpellHistory()->GetRemainingCooldown(GetSpellInfo()));
         if (want > left)
             target->GetSpellHistory()->ModifyCooldown(GetId(), want - left);

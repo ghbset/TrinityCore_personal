@@ -3264,7 +3264,7 @@ void Spell::EffectWeaponDmg()
                             float daggerMod = 1.5f;
                             for (SpellEffectInfo const& eff : m_spellInfo->GetEffects())
                                 if (eff.Effect == SPELL_EFFECT_WEAPON_PERCENT_DAMAGE && eff.MiscValue > 0)
-                                    daggerMod = float(eff.MiscValue) / float(eff.BasePoints + 1);
+                                    daggerMod = float(eff.MiscValue) / float(eff.CalcValue(unitCaster));
                             totalDamagePercentMod *= daggerMod;
                         }
             }
@@ -3481,7 +3481,7 @@ void Spell::EffectWeaponDmg()
     weaponDamage = std::max(weaponDamage, 0);
 
     // Add melee damage bonuses (also check for negative)
-    weaponDamage = unitCaster->MeleeDamageBonusDone(unitTarget, weaponDamage, m_attackType, m_spellInfo);
+    weaponDamage = unitCaster->MeleeDamageBonusDone(unitTarget, weaponDamage, m_attackType, m_spellInfo, m_spellSchoolMask); // Forever: magic wands pass their school (Wand Specialization)
     m_damage += unitTarget->MeleeDamageBonusTaken(unitCaster, weaponDamage, m_attackType, m_spellInfo);
 }
 

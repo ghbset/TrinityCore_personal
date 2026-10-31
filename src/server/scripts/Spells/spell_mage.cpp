@@ -849,7 +849,7 @@ class spell_mage_ignite : public AuraScript
         PreventDefaultAction();
 
         SpellInfo const* igniteDot = sSpellMgr->AssertSpellInfo(SPELL_MAGE_IGNITE);
-        int32 pct = 8 * GetSpellInfo()->GetRank();
+        int32 pct = aurEff->GetAmount() > 1 ? aurEff->GetAmount() : 8 * GetSpellInfo()->GetRank(); // Forever: our ranks carry 8/16/24/32/40; stock 11119-12848 carry 0/1, keep 8 * rank
 
         ASSERT(igniteDot->GetMaxTicks() > 0);
         int32 amount = int32(CalculatePct(eventInfo.GetDamageInfo()->GetDamage(), pct) / igniteDot->GetMaxTicks());

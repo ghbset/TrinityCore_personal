@@ -475,8 +475,10 @@ void Unit::Update(uint32 p_time)
             ObjectGuid targetGuid = itr->first;
             uint32 count = itr->second;
             extraAttacksTargets.erase(itr);
+            // Forever (Reckoning): an extra attack only lands on a hostile unit in melee range
             if (Unit* victim = ObjectAccessor::GetUnit(*this, targetGuid))
-                HandleProcExtraAttackFor(victim, count);
+                if (IsValidAttackTarget(victim) && IsWithinMeleeRange(victim))
+                    HandleProcExtraAttackFor(victim, count);
         }
         _lastExtraAttackSpell = 0;
     }
@@ -2291,8 +2293,13 @@ void Unit::AddExtraAttacks(uint32 count)
     ObjectGuid targetGUID = _lastDamagedTargetGuid;
     if (!targetGUID)
     {
-        if (ObjectGuid selection = GetTarget())
-            targetGUID = selection; // Spell was cast directly (not triggered by aura)
+        // Spell was cast directly or procced from damage taken (Forever Reckoning): the selection if it can be
+        // hit in melee, else the melee victim (a far / friendly selection must not get the swing)
+        Unit* selection = GetTarget() ? ObjectAccessor::GetUnit(*this, GetTarget()) : nullptr;
+        if (selection && IsValidAttackTarget(selection) && IsWithinMeleeRange(selection))
+            targetGUID = selection->GetGUID();
+        else if (Unit* victim = GetVictim())
+            targetGUID = victim->GetGUID();
         else
             return;
     }
@@ -6937,6 +6944,9 @@ float Unit::SpellDamagePctDone(Unit* victim, SpellInfo const* spellProto, Damage
                     SpellInfo const* spell = aura->GetSpellInfo();
                     if (spell->SpellFamilyName != SPELLFAMILY_WARLOCK || !(spell->SpellFamilyFlags[1] & 0x0004071B || spell->SpellFamilyFlags[0] & 0x8044C402))
                         continue;
+                    // forever_classes: only your other Affliction effects (not other warlocks', not the drain itself)
+                    if (aura->GetCasterGUID() != GetGUID() || spell->IsRankOf(spellProto))
+                        continue;
                     modPercent += stepPercent * aura->GetStackAmount();
                     if (modPercent >= maxPercent)
                     {
@@ -7034,7 +7044,11 @@ float Unit::SpellDamagePctDone(Unit* victim, SpellInfo const* spellProto, Damage
                     if (owner->HasAura(56377) && victim->GetLevel() > owner->GetLevel())
                         DoneTotalMod *= 4.0f;
                     else
-                        DoneTotalMod *= 3.0f;
+                    {
+                        // Forever: the clone's e1 DUMMY holds "$s2% increased damage to Frozen targets" (300 -> x4); stock 30455 has no e1 and stays x3
+                        SpellEffectInfo const& frozenBonus = spellProto->GetEffect(EFFECT_1);
+                        DoneTotalMod *= (frozenBonus.IsEffect(SPELL_EFFECT_DUMMY) && frozenBonus.CalcValue() > 0) ? 1.0f + frozenBonus.CalcValue() / 100.0f : 3.0f;
+                    }
                 }
             }
 
@@ -7386,16 +7400,13 @@ float Unit::SpellCritChanceTaken(Unit const* caster, SpellInfo const* spellInfo,
                     switch (aurEff->GetMiscValue())
                     {
                         case 911: // Shatter (Rank 3)
-                            modChance += 16.f;
-                            [[fallthrough]];
                         case 910: // Shatter (Rank 2)
-                            modChance += 17.f;
-                            [[fallthrough]];
                         case 849: // Shatter (Rank 1)
-                            modChance += 17.f;
                             if (!HasAuraState(AURA_STATE_FROZEN, spellInfo, caster))
                                 break;
-
+                            // Forever: use the rank's amount (17/33/50); stock ranks carry 0, keep 17/34/50 for them
+                            modChance = aurEff->GetAmount() > 1 ? float(aurEff->GetAmount())
+                                : (aurEff->GetMiscValue() == 911 ? 50.f : aurEff->GetMiscValue() == 910 ? 34.f : 17.f);
                             crit_chance += modChance;
                             break;
                         case 7917: // Glyph of Shadowburn
@@ -8246,7 +8257,7 @@ uint32 Unit::MeleeDamageBonusDone(Unit* victim, uint32 pdamage, WeaponAttackType
     // Done total percent damage auras
     float DoneTotalMod = 1.0f;
 
-    SpellSchoolMask schoolMask = spellProto ? spellProto->GetSchoolMask() : damageSchoolMask;
+    SpellSchoolMask schoolMask = (spellProto && damageSchoolMask == SPELL_SCHOOL_MASK_NORMAL) ? spellProto->GetSchoolMask() : damageSchoolMask; // Forever: a wand school passed by EffectWeaponDmg wins
 
     // mods for SPELL_SCHOOL_MASK_NORMAL are already factored in base melee damage calculation
     if (!(schoolMask & SPELL_SCHOOL_MASK_NORMAL))
@@ -8452,6 +8463,11 @@ uint32 Unit::MeleeDamageBonusTaken(Unit* attacker, uint32 pdamage, WeaponAttackT
             });
         }
     }
+    else    // forever_classes: white hits too (Improved Kidney Shot: "your poisons and attacks"); damageSchoolMask is the swing's school
+        TakenTotalMod *= GetTotalAuraMultiplier(SPELL_AURA_MOD_SCHOOL_MASK_DAMAGE_FROM_CASTER, [attacker, damageSchoolMask](AuraEffect const* aurEff) -> bool
+        {
+            return aurEff->GetCasterGUID() == attacker->GetGUID() && (aurEff->GetMiscValue() & damageSchoolMask);
+        });
 
     // .. taken pct: dummy auras
     AuraEffectList const& mDummyAuras = GetAuraEffectsByType(SPELL_AURA_DUMMY);

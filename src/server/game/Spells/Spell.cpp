@@ -3711,8 +3711,8 @@ void Spell::handle_immediate()
     // Remove used for cast item if need (it can be already NULL after TakeReagents call
     TakeCastItem();
 
-    // handle ammo consumption for Hunter's volley spell
-    if (m_spellInfo->IsRangedWeaponSpell() && m_spellInfo->IsChanneled())
+    // handle ammo consumption for Hunter's volley spell (only when it requires ammo: Forever's Volley does not)
+    if (m_spellInfo->IsRangedWeaponSpell() && m_spellInfo->IsChanneled() && m_spellInfo->HasAttribute(SPELL_ATTR0_REQ_AMMO))
         TakeAmmo();
 
     if (m_spellState != SPELL_STATE_CASTING)
@@ -7337,6 +7337,23 @@ SpellCastResult Spell::CheckItems(uint32* param1 /*= nullptr*/, uint32* param2 /
     return SPELL_CAST_OK;
 }
 
+// Forever: SPELLMOD_NOT_LOSE_CASTING_TIME is a chance to ignore this hit's pushback ("chance to avoid interruption"),
+// except mods whose MiscValueB is 1 (Eye of the Storm, "Reduces the pushback ... by X%"), which stay a reduction.
+// forever_classes (paladin base pass 2026-10-30): SPELL_AURA_REDUCE_PUSHBACK (Concentration Aura "a $s1% chance of ignoring
+// spell interruption", Barkskin / Voice of Truth 100) is added to the same chance instead of reducing the pushback.
+// Returns true when the roll ignores the pushback; adds the reduction-type amount to reduce.
+static bool ForeverAvoidPushback(Player* player, Spell* spell, SpellInfo const* info, int32& reduce)
+{
+    int32 notLose = 100;                                    // must be initialized to 100 for percent modifiers
+    player->ApplySpellMod(info->Id, SPELLMOD_NOT_LOSE_CASTING_TIME, notLose, spell);
+    for (AuraType type : { SPELL_AURA_ADD_FLAT_MODIFIER, SPELL_AURA_ADD_PCT_MODIFIER })
+        for (AuraEffect const* aurEff : player->GetAuraEffectsByType(type))
+            if (aurEff->GetMiscValue() == SPELLMOD_NOT_LOSE_CASTING_TIME && aurEff->GetMiscValueB() == 1 && aurEff->IsAffectedOnSpell(info))
+                reduce += aurEff->GetAmount();
+    int32 chance = notLose - 100 - reduce + player->GetTotalAuraModifier(SPELL_AURA_REDUCE_PUSHBACK);
+    return chance > 0 && roll_chance_i(chance);
+}
+
 void Spell::Delayed() // only called in DealDamage()
 {
     Player* playerCaster = m_caster->ToPlayer();
@@ -7353,9 +7370,9 @@ void Spell::Delayed() // only called in DealDamage()
     //check pushback reduce
     int32 delaytime = 500;                                  // spellcasting delay is normally 500ms
 
-    int32 delayReduce = 100;                                // must be initialized to 100 for percent modifiers
-    playerCaster->ApplySpellMod(m_spellInfo->Id, SPELLMOD_NOT_LOSE_CASTING_TIME, delayReduce, this);
-    delayReduce += playerCaster->GetTotalAuraModifier(SPELL_AURA_REDUCE_PUSHBACK) - 100;
+    int32 delayReduce = 0;
+    if (ForeverAvoidPushback(playerCaster, this, m_spellInfo, delayReduce))
+        return;
     if (delayReduce >= 100)
         return;
 
@@ -7398,9 +7415,9 @@ void Spell::DelayedChannel()
 
     int32 delaytime = CalculatePct(duration, 25); // channeling delay is normally 25% of its time per hit
 
-    int32 delayReduce = 100;                                    // must be initialized to 100 for percent modifiers
-    playerCaster->ApplySpellMod(m_spellInfo->Id, SPELLMOD_NOT_LOSE_CASTING_TIME, delayReduce, this);
-    delayReduce += playerCaster->GetTotalAuraModifier(SPELL_AURA_REDUCE_PUSHBACK) - 100;
+    int32 delayReduce = 0;
+    if (ForeverAvoidPushback(playerCaster, this, m_spellInfo, delayReduce))
+        return;
     if (delayReduce >= 100)
         return;
 
@@ -8481,11 +8498,14 @@ void Spell::TriggerGlobalCooldown()
         modOwner->ApplySpellMod(m_spellInfo->Id, SPELLMOD_GLOBAL_COOLDOWN, gcd, this);
 
     // Apply haste rating
+    // @forever_classes: not when a GLOBAL_COOLDOWN mod already changed it (Forever's Nature's Grace e1 -10%: 1.35 s,
+    // its own cast-speed part must not cut it a second time); the 1..1.5 s clamp still applies to modded GCDs
     if (m_spellInfo->StartRecoveryCategory == 133 && m_spellInfo->StartRecoveryTime == 1500 &&
         m_spellInfo->DmgClass != SPELL_DAMAGE_CLASS_MELEE && m_spellInfo->DmgClass != SPELL_DAMAGE_CLASS_RANGED &&
         !m_spellInfo->HasAttribute(SPELL_ATTR0_REQ_AMMO) && !m_spellInfo->HasAttribute(SPELL_ATTR0_ABILITY))
     {
-        gcd = int32(float(gcd) * m_caster->GetFloatValue(UNIT_MOD_CAST_SPEED));
+        if (gcd == 1500)
+            gcd = int32(float(gcd) * m_caster->GetFloatValue(UNIT_MOD_CAST_SPEED));
         RoundToInterval<int32>(gcd, MIN_GCD, MAX_GCD);
     }
 

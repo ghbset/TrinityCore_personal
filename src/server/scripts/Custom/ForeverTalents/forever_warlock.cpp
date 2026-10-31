@@ -24,6 +24,7 @@ namespace
         SPELL_DEMONIC_SACRIFICE     = 18788,
         SACRIFICE_BUFF_MARKER       = 18789,   // e1 DUMMY MiscValue of our Demonic Sacrifice buffs (MiscValueB = creature family)
         SPELL_CREATE_SOUL_SHARD     = 43836,
+        SOUL_HARVESTING_MARKER      = 437032,  // e1 DUMMY MiscValue of our Soul Harvesting ranks (Forever's talent id)
     };
 
     // the family a Demonic Sacrifice buff belongs to, or -1 when the spell is not one (forever_classes data)
@@ -63,20 +64,29 @@ namespace
     }
 }
 
-// Soul Harvesting: the kill counts only while the victim has this warlock's Drain Soul
-class spell_warl_forever_soul_harvesting : public AuraScript
+// Soul Harvesting (bound to Drain Soul): a victim that dies with this Drain Soul on it, whoever killed it, gives the
+// caster the Soul Harvest of their Soul Harvesting rank (the talent's e1 DUMMY marker; the buff is its e0 TriggerSpell)
+class spell_warl_forever_drain_soul_harvest : public AuraScript
 {
-    PrepareAuraScript(spell_warl_forever_soul_harvesting);
+    PrepareAuraScript(spell_warl_forever_drain_soul_harvest);
 
-    bool CheckProc(ProcEventInfo& eventInfo)
+    void AfterRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
     {
-        Unit* victim = eventInfo.GetActionTarget();
-        return victim && victim->GetAuraEffect(SPELL_AURA_PERIODIC_DAMAGE, SPELLFAMILY_WARLOCK, 0x4000, 0, 0, GetTarget()->GetGUID());
+        if (GetTargetApplication()->GetRemoveMode() != AURA_REMOVE_BY_DEATH)
+            return;
+        Unit* caster = GetCaster();
+        if (!caster)
+            return;
+        AuraEffect const* talent = GetMarkedTalent(caster, SOUL_HARVESTING_MARKER);
+        if (!talent)
+            return;
+        if (uint32 buff = talent->GetSpellInfo()->GetEffect(EFFECT_0).TriggerSpell)
+            caster->CastSpell(caster, buff, true);
     }
 
     void Register() override
     {
-        DoCheckProc += AuraCheckProcFn(spell_warl_forever_soul_harvesting::CheckProc);
+        AfterEffectRemove += AuraEffectRemoveFn(spell_warl_forever_drain_soul_harvest::AfterRemove, EFFECT_1, SPELL_AURA_PERIODIC_DAMAGE, AURA_EFFECT_HANDLE_REAL);
     }
 };
 
@@ -359,7 +369,7 @@ class spell_warl_forever_demonic_brand : public AuraScript
 void AddSC_forever_talents_warlock()
 {
     RegisterSpellScript(spell_warl_forever_demonic_brand);
-    RegisterSpellScript(spell_warl_forever_soul_harvesting);
+    RegisterSpellScript(spell_warl_forever_drain_soul_harvest);
     RegisterSpellScript(spell_warl_forever_demonic_sacrifice);
     RegisterSpellScript(spell_warl_forever_summon_demon);
     RegisterSpellScript(spell_warl_forever_pyroclasm);

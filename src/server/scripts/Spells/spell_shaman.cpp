@@ -622,7 +622,8 @@ class spell_sha_flametongue_weapon : public AuraScript
 
         Item* item = ASSERT_NOTNULL(player->GetWeaponForAttack(attType));
 
-        float basePoints = aurEff->GetSpellEffectInfo().CalcValue();
+        // forever_classes: the aura amount, computed at the wielder's level (Forever's per-level growth on the passives)
+        float basePoints = aurEff->GetAmount();
 
         // Flametongue max damage is normalized based on a 4.0 speed weapon
         // Tooltip says max damage = BasePoints / 25, so BasePoints / 25 / 4 to get base damage per 1.0s AS

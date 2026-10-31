@@ -95,6 +95,12 @@ public:
 
         // Everything looks OK, create new pet
         Pet* pet = player->CreateTamedPetFrom(creatureTarget);
+        if (!pet)
+        {
+            handler->PSendSysMessage("Could not create a pet from this creature.");
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
 
         // "kill" original creature
         creatureTarget->DespawnOrUnsummon();

@@ -47,6 +47,10 @@
 #include "TSAura.h"
 #include "TSEvents.h"
 #include "TSMutable.h"
+#include "GameTime.h"
+#include "Timer.h"
+#include <mutex>
+#include <unordered_map>
 // @tswow-end
 
 //
@@ -1704,12 +1708,55 @@ void AuraEffect::HandlePhase(AuraApplication const* aurApp, uint8 mode, bool app
 /***   UNIT MODEL   ***/
 /**********************/
 
+// @forever_classes Furor (Forever): entering Cat Form gives X% of the energy the druid had when leaving Cat Form + X/10
+// per second spent outside Bear / Cat / Dire Bear Form since then, capped at X. File-local state (no Unit layout change).
+// ponytail: one small entry per druid GUID until restart, global mutex (shapeshifts are rare).
+namespace
+{
+    struct ForeverFurorState { int32 catEnergy = 0; uint32 freeMs = 0; uint32 lastMs = 0; };
+    std::unordered_map<ObjectGuid, ForeverFurorState> sForeverFuror;
+    std::mutex sForeverFurorLock;
+
+    bool ForeverIsFeralForm(ShapeshiftForm f) { return f == FORM_CAT || f == FORM_BEAR || f == FORM_DIREBEAR; }
+
+    // called on every shapeshift apply / remove while the old form is still set
+    void ForeverFurorTick(Unit* u)
+    {
+        std::lock_guard<std::mutex> guard(sForeverFurorLock);
+        ForeverFurorState& s = sForeverFuror[u->GetGUID()];
+        uint32 now = GameTime::GetGameTimeMS();
+        if (!ForeverIsFeralForm(u->GetShapeshiftForm()))
+        {
+            if (s.lastMs)
+                s.freeMs += getMSTimeDiff(s.lastMs, now);
+            else if (Player* p = u->ToPlayer()) // first shift since restart: time in caster form since login counts
+                s.freeMs = uint32(std::min<time_t>(GameTime::GetGameTime() - p->m_logintime, 3600) * IN_MILLISECONDS);
+        }
+        s.lastMs = now;
+        if (u->GetShapeshiftForm() == FORM_CAT)
+            s.catEnergy = u->GetPower(POWER_ENERGY);
+    }
+
+    int32 ForeverFurorCatGain(Unit* u, int32 furor)
+    {
+        std::lock_guard<std::mutex> guard(sForeverFurorLock);
+        ForeverFurorState& s = sForeverFuror[u->GetGUID()];
+        int32 gain = std::min<int32>(CalculatePct(s.catEnergy, furor) + int32(furor / 10 * (s.freeMs / 1000)), furor);
+        s.freeMs = 0;
+        return gain;
+    }
+}
+
 void AuraEffect::HandleAuraModShapeshift(AuraApplication const* aurApp, uint8 mode, bool apply) const
 {
     if (!(mode & AURA_EFFECT_HANDLE_REAL_OR_REAPPLY_MASK))
         return;
 
     Unit* target = aurApp->GetTarget();
+
+    // @forever_classes Furor: account the time / energy of the form being left (apply: old form; remove: this form)
+    if (target->GetTypeId() == TYPEID_PLAYER)
+        ForeverFurorTick(target);
 
     uint32 modelid = 0;
     Powers PowerType = POWER_MANA;
@@ -1801,7 +1848,6 @@ void AuraEffect::HandleAuraModShapeshift(AuraApplication const* aurApp, uint8 mo
 
         if (PowerType != POWER_MANA)
         {
-            uint32 oldPower = target->GetPower(PowerType);
             // reset power to default values only at power change
             if (target->GetPowerType() != PowerType)
                 target->SetPowerType(PowerType);
@@ -1822,7 +1868,8 @@ void AuraEffect::HandleAuraModShapeshift(AuraApplication const* aurApp, uint8 mo
                         case FORM_CAT:
                         {
                             CastSpellExtraArgs args(this);
-                            args.AddSpellMod(SPELLVALUE_BASE_POINT0, std::min<int32>(oldPower, FurorChance));
+                            // @forever_classes Furor: Forever's stored-energy refill (was min(energy now, X))
+                            args.AddSpellMod(SPELLVALUE_BASE_POINT0, ForeverFurorCatGain(target, FurorChance));
                             target->SetPower(POWER_ENERGY, 0);
                             target->CastSpell(target, 17099, args);
                             break;
@@ -4427,7 +4474,9 @@ void AuraEffect::HandleAuraDummy(AuraApplication const* aurApp, uint8 mode, bool
         // AT APPLY
         if (apply)
         {
-            switch (GetId())
+            // @forever_classes Tame Beast clone: same 10 threat as stock 1515 (only 1515 and the clone trigger 13481 from e1)
+            uint32 const dummyId = m_spellInfo->GetEffect(EFFECT_1).TriggerSpell == 13481 ? 1515 : GetId();
+            switch (dummyId)
             {
                 case 1515:                                      // Tame beast
                     // FIX_ME: this is 2.0.12 threat effect replaced in 2.1.x by dummy aura, must be checked for correctness

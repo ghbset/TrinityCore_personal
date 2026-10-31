@@ -3566,7 +3566,8 @@ bool Player::HandlePassiveSpellLearn(SpellInfo const* spellInfo)
         {
             if (spellEffectInfo.IsAura())
             {
-                if (!HasAura(spellInfo->Id) && HasItemFitToSpellRequirements(spellInfo))
+                // forever_classes: need_cast keeps stance passives (Defiance) out of the other stances
+                if (need_cast && !HasAura(spellInfo->Id) && HasItemFitToSpellRequirements(spellInfo))
                     AddAura(spellInfo->Id, this);
                 return false;
             }
@@ -8049,6 +8050,16 @@ void Player::ApplyItemDependentAuras(Item* item, bool apply)
             SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(itr->first);
             if (!spellInfo || !spellInfo->IsPassive() || spellInfo->EquippedItemClass < 0)
                 continue;
+
+            // forever_classes: a stance passive with an item requirement (Defiance) only in its stance;
+            // HandleShapeshiftBoosts adds it on entering the stance. Spells without Stances are unaffected.
+            if (spellInfo->Stances)
+            {
+                ShapeshiftForm form = GetShapeshiftForm();
+                if (!(form && (spellInfo->Stances & (UI64LIT(1) << (form - 1)))) &&
+                    !(!form && spellInfo->HasAttribute(SPELL_ATTR2_NOT_NEED_SHAPESHIFT)))
+                    continue;
+            }
 
             if (!HasAura(itr->first) && HasItemFitToSpellRequirements(spellInfo))
                 AddAura(itr->first, this);  // no SMSG_SPELL_GO in sniff found
@@ -18597,8 +18608,20 @@ void Player::_LoadActions(PreparedQueryResult result)
             uint32 action = fields[1].GetUInt32();
             uint8 type = fields[2].GetUInt8();
 
+            // A button can hold a lower rank the player only knows as a superseded (inactive) rank, e.g. ranks learned
+            // without SMSG_SUPERCEDED_SPELL reaching the client. HandleCastSpellOpcode drops such casts silently, so the
+            // client only shows its own GCD ("not ready") and the spell never fires. Point the button at the active rank.
+            uint32 const savedAction = action;
+            if (type == ACTION_BUTTON_SPELL && HasSpell(action) && !HasActiveSpell(action))
+                for (uint32 next = sSpellMgr->GetNextSpellInChain(action); next; next = sSpellMgr->GetNextSpellInChain(next))
+                    if (HasActiveSpell(next))
+                    {
+                        action = next;
+                        break;
+                    }
+
             if (ActionButton* ab = addActionButton(button, action, type))
-                ab->uState = ACTIONBUTTON_UNCHANGED;
+                ab->uState = action == savedAction ? ACTIONBUTTON_UNCHANGED : ACTIONBUTTON_CHANGED;
             else
             {
                 TC_LOG_DEBUG("entities.player", "Player::_LoadActions: Player '{}' ({}) has an invalid action button (Button: {}, Action: {}, Type: {}). It will be deleted at next save. This can be due to a player changing their talents.",
@@ -21785,7 +21808,8 @@ void Player::ApplySpellMod(uint32 spellId, SpellModOp op, T& basevalue, Spell* s
                         return;
                     // Special case for Backdraft: do not apply GCD reduction if cast time reduction was not applied (i.e. when Backlash is consumed first).
                     // (Backdraft is the only PCT_MOD on global cooldown)
-                    else if (op == SPELLMOD_GLOBAL_COOLDOWN)
+                    // @forever_classes: warlock only; Forever's Nature's Grace (druid) has a PCT GCD mod with no cast-time mod beside it
+                    else if (op == SPELLMOD_GLOBAL_COOLDOWN && mod->ownerAura->GetSpellInfo()->SpellFamilyName == SPELLFAMILY_WARLOCK)
                         return;
                 }
 

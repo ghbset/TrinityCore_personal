@@ -47,7 +47,9 @@ namespace
             for (AuraType type : { SPELL_AURA_ADD_FLAT_MODIFIER, SPELL_AURA_ADD_PCT_MODIFIER })
                 for (AuraEffect const* e : owner->GetAuraEffectsByType(type))
                 {
-                    if (!e->IsAffectingSpell(summon))
+                    // passive talents only (Ferocity, Unleashed Fury): a buff such as Rapid Killing's "next Shot"
+                    // damage is still up while the dive summons the hawk, and must not last the hawk's 18 sec
+                    if (!e->GetBase()->IsPassive() || !e->IsAffectingSpell(summon))
                         continue;
                     if (e->GetMiscValue() == SPELLMOD_CRITICAL_CHANCE)
                         crit += e->GetAmount();

@@ -320,7 +320,15 @@ class spell_pri_litany_of_light_forever : public AuraScript
     bool CheckProc(ProcEventInfo& eventInfo)
     {
         SpellInfo const* spellInfo = eventInfo.GetSpellInfo();
-        return spellInfo && spellInfo->ManaCost && !(eventInfo.GetProcSpell() && eventInfo.GetProcSpell()->IsTriggered());
+        Spell const* procSpell = eventInfo.GetProcSpell();
+        if (!spellInfo || !spellInfo->ManaCost || (procSpell && procSpell->IsTriggered()))
+            return false;
+        // Penance (one cast, heal or damage by target): only a heal counts, not the offensive cast
+        if (procSpell)
+            if (Unit* target = procSpell->m_targets.GetUnitTarget())
+                if (!GetTarget()->IsFriendlyTo(target))
+                    return false;
+        return true;
     }
 
     void HandleProc(AuraEffect const* aurEff, ProcEventInfo& eventInfo)

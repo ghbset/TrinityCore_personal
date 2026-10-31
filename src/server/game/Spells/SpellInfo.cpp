@@ -2327,28 +2327,36 @@ void SpellInfo::_LoadSpellDiminishInfo()
                 // Hamstring - limit duration to 10s in PvP
                 if (SpellFamilyFlags[0] & 0x2)
                     return DIMINISHING_LIMITONLY;
-                // Charge Stun (own diminishing)
-                else if (SpellFamilyFlags[0] & 0x01000000)
-                    return DIMINISHING_CHARGE;
+                // forever_classes: Charge Stun has no own group (Forever DiminishType 4 = Hammer of Justice / Intercept
+                // Stun / Bash...); it falls through to MECHANIC_STUN -> DIMINISHING_CONTROLLED_STUN.
                 break;
             }
             case SPELLFAMILY_WARLOCK:
             {
-                // Curses/etc (forever_classes: Forever's Fear / Howl of Terror also carry A 0x80000000; they keep the fear DR)
-                if (((SpellFamilyFlags[0] & 0x80000000) || (SpellFamilyFlags[1] & 0x200)) && !(GetAllEffectsMechanicMask() & (1 << MECHANIC_FEAR)))
-                    return DIMINISHING_LIMITONLY;
+                // forever_classes: no curse LIMITONLY rule (Forever Curse of Recklessness / Tongues / Bane of Doom DiminishType 0:
+                // full duration on players); Fear / Howl of Terror reach DIMINISHING_FEAR through MECHANIC_FEAR below.
                 // Seduction
-                else if (SpellFamilyFlags[1] & 0x10000000)
+                if (SpellFamilyFlags[1] & 0x10000000)
                     return DIMINISHING_FEAR;
+                // forever_classes: Death Coil (A 0x80000) has no DR (Forever 6789.. DiminishType 0, not the horror group)
+                if (SpellFamilyFlags[0] & 0x80000)
+                    return DIMINISHING_NONE;
+                // forever_classes: Banish shares the Polymorph / Sap group (Forever 710/18647 DiminishType 16); the 6 s PvP
+                // limit below still applies (DISORIENT is duration-limited)
+                if (SpellFamilyFlags[1] & 0x8000000)
+                    return DIMINISHING_DISORIENT;
                 break;
             }
             case SPELLFAMILY_DRUID:
             {
-                // Pounce
-                if (SpellFamilyFlags[0] & 0x20000)
-                    return DIMINISHING_OPENING_STUN;
+                // forever_classes: Pounce has no own group (Forever 9005 DiminishType 4 = Hammer of Justice / Cheap Shot /
+                // Bash / Charge Stun); it falls through to MECHANIC_STUN -> DIMINISHING_CONTROLLED_STUN.
+                // forever_classes: Feral Charge root (Forever 19675 DiminishType 0): the only druid spell that roots
+                // and interrupts; no DR (was CONTROLLED_ROOT via the root mechanic, shared with Entangling Roots)
+                if (HasAura(SPELL_AURA_MOD_ROOT) && HasEffect(SPELL_EFFECT_INTERRUPT_CAST))
+                    return DIMINISHING_NONE;
                 // Cyclone
-                else if (SpellFamilyFlags[1] & 0x20)
+                if (SpellFamilyFlags[1] & 0x20)
                     return DIMINISHING_CYCLONE;
                 // Entangling Roots
                 // Nature's Grasp
@@ -2357,6 +2365,20 @@ void SpellInfo::_LoadSpellDiminishInfo()
                 // Faerie Fire
                 else if (SpellFamilyFlags[0] & 0x400)
                     return DIMINISHING_LIMITONLY;
+                // forever_classes: Hibernate shares the Polymorph / Sap group (Forever 2637 DiminishType 16; was its
+                // own SLEEP group via the mechanic). Word-2 0x8000 is on Hibernate only; DISORIENT stays 10 s limited.
+                else if (SpellFamilyFlags[2] & 0x8000)
+                    return DIMINISHING_DISORIENT;
+                break;
+            }
+            case SPELLFAMILY_PRIEST:
+            {
+                // forever_classes: Chastise (root) and Confounding Flash (confuse) share the Polymorph / Sap group
+                // (Forever 1277331 / 1277455 DiminishType 16); no other family-6 spell has these bits with these auras.
+                if ((SpellFamilyFlags[1] & 0x10) && HasAura(SPELL_AURA_MOD_ROOT))
+                    return DIMINISHING_DISORIENT;
+                if ((SpellFamilyFlags[0] & 0x40000000) && HasAura(SPELL_AURA_MOD_CONFUSE))
+                    return DIMINISHING_DISORIENT;
                 break;
             }
             case SPELLFAMILY_ROGUE:
@@ -2364,15 +2386,13 @@ void SpellInfo::_LoadSpellDiminishInfo()
                 // Gouge
                 if (SpellFamilyFlags[0] & 0x8)
                     return DIMINISHING_DISORIENT;
-                // Blind
-                else if (SpellFamilyFlags[0] & 0x1000000)
-                    return DIMINISHING_FEAR;
-                // Cheap Shot
-                else if (SpellFamilyFlags[0] & 0x400)
+                // forever_classes: Kidney Shot has its own DR group (Forever 408/8643 DiminishType 128); the otherwise
+                // unused OPENING_STUN group serves as "Kidney Shot" (DRTYPE_ALL, PvP duration limit, like controlled stun).
+                else if (SpellFamilyFlags[0] & 0x200000)
                     return DIMINISHING_OPENING_STUN;
-                // Crippling poison - Limit to 10 seconds in PvP (No SpellFamilyFlags)
-                else if (SpellIconID == 163)
-                    return DIMINISHING_LIMITONLY;
+                // forever_classes: Cheap Shot falls to MECHANIC_STUN -> CONTROLLED_STUN (Forever 1833 DiminishType 4);
+                // Blind (Mechanic 2) and Crippling Poison (icon 163) fall to DIMINISHING_NONE (Forever 2094 / 3409 /
+                // 11201 DiminishType 0: no DR, no PvP duration cap).
                 break;
             }
             case SPELLFAMILY_HUNTER:
@@ -2401,6 +2421,9 @@ void SpellInfo::_LoadSpellDiminishInfo()
                     return DIMINISHING_LIMITONLY;
                 // Turn Evil
                 else if ((SpellFamilyFlags[1] & 0x804000) && SpellIconID == 309)
+                    return DIMINISHING_FEAR;
+                // forever_classes: Turn Undead (Forever 2878/5627/10326 DiminishType 32 = the fear group)
+                else if (SpellFamilyFlags[2] & 0x100000)
                     return DIMINISHING_FEAR;
                 break;
             }

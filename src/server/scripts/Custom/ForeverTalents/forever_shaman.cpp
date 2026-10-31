@@ -7,6 +7,9 @@
 #include "ScriptMgr.h"
 #include "Creature.h"
 #include "Map.h"
+#include "Player.h"
+#include "DBCStores.h"
+#include "Item.h"
 #include "SpellAuraEffects.h"
 #include "SpellHistory.h"
 #include "SpellInfo.h"
@@ -117,6 +120,41 @@ class spell_forever_sha_water_shield : public AuraScript
     }
 };
 
+// Windfury Totem aura (forever_classes clones): no proc for a player whose main hand carries Windfury Weapon (Forever
+// 8232 text: "When applied to main hand, disables any benefit you personally receive from Windfury Totem"). The
+// imbue is recognised by its enchant's equip spell: family Shaman, class mask word 2 0x100 (the Windfury Weapon passives).
+class spell_forever_sha_windfury_totem : public AuraScript
+{
+    PrepareAuraScript(spell_forever_sha_windfury_totem);
+
+    bool CheckProc(ProcEventInfo& eventInfo)
+    {
+        Player* player = eventInfo.GetActor() ? eventInfo.GetActor()->ToPlayer() : nullptr;
+        if (!player)
+            return true;
+        Item* weapon = player->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND);
+        if (!weapon)
+            return true;
+        SpellItemEnchantmentEntry const* enchant = sSpellItemEnchantmentStore.LookupEntry(weapon->GetEnchantmentId(TEMP_ENCHANTMENT_SLOT));
+        if (!enchant)
+            return true;
+        for (uint8 i = 0; i < MAX_ITEM_ENCHANTMENT_EFFECTS; ++i)
+        {
+            if (enchant->Effect[i] != ITEM_ENCHANTMENT_TYPE_EQUIP_SPELL)
+                continue;
+            SpellInfo const* equip = sSpellMgr->GetSpellInfo(enchant->EffectArg[i]);
+            if (equip && equip->SpellFamilyName == SPELLFAMILY_SHAMAN && (equip->SpellFamilyFlags[2] & 0x100))
+                return false;
+        }
+        return true;
+    }
+
+    void Register() override
+    {
+        DoCheckProc += AuraCheckProcFn(spell_forever_sha_windfury_totem::CheckProc);
+    }
+};
+
 // Fire Nova (forever_classes clones): needs the shaman's fire totem in range; the totem casts e0's TriggerSpell (the
 // rank's nova, from data; stock spell_sha_fire_nova looks it up by stock rank chain).
 class spell_forever_sha_fire_nova : public SpellScript
@@ -138,7 +176,12 @@ class spell_forever_sha_fire_nova : public SpellScript
             SetCustomCastResultMessage(SPELL_CUSTOM_ERROR_MUST_HAVE_FIRE_TOTEM);
             return SPELL_FAILED_CUSTOM_ERROR;
         }
-        if (!GetCaster()->IsWithinDistInMap(totem, GetCaster()->GetSpellMaxRangeForTarget(totem, GetSpellInfo())))
+        // the cast targets the caster, so Spell::CheckRange never applies SPELLMOD_RANGE (Elemental Reach) to the
+        // totem distance: apply it here
+        float range = GetCaster()->GetSpellMaxRangeForTarget(totem, GetSpellInfo());
+        if (Player* modOwner = GetCaster()->GetSpellModOwner())
+            modOwner->ApplySpellMod(GetSpellInfo()->Id, SPELLMOD_RANGE, range, GetSpell());
+        if (!GetCaster()->IsWithinDistInMap(totem, range))
             return SPELL_FAILED_OUT_OF_RANGE;
         return SPELL_CAST_OK;
     }
@@ -206,4 +249,5 @@ void AddSC_forever_talents_shaman()
     RegisterSpellScript(spell_forever_sha_totemic_projection);
     RegisterSpellScript(spell_forever_sha_improved_stormstrike);
     RegisterSpellScript(spell_forever_sha_chain_heal);
+    RegisterSpellScript(spell_forever_sha_windfury_totem);
 }
